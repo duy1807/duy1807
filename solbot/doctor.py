@@ -11,6 +11,7 @@ import asyncio
 import os
 import shutil
 import stat
+import sys
 import time
 
 import httpx
@@ -81,10 +82,9 @@ class Doctor:
         c = self.c
         if not (c.wallet_encrypted_path or c.wallet_keypair_path):
             return
-        if c.wallet_encrypted_path and not os.environ.get(c.wallet_passphrase_env):
-            self.add("Giải mã ví", SKIP, f"{c.wallet_passphrase_env} không có trong môi trường (systemd credential "
-                                         "chỉ có khi chạy service)")
-            return
+        if c.wallet_encrypted_path and not os.environ.get(c.wallet_passphrase_env) and not sys.stdin.isatty():
+            self.add("Giải mã ví", SKIP, f"{c.wallet_passphrase_env} không có và không có terminal để nhập passphrase")
+            return  # in a terminal load_wallet() asks for the passphrase interactively
         try:
             w = load_wallet(c.wallet_keypair_path, c.wallet_encrypted_path, c.wallet_passphrase_env)
         except (WalletError, Exception) as e:

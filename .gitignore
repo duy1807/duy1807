@@ -10,3 +10,4 @@ secrets/
 *.enc.json
 id.json
 reports/junit.xml
+dist/

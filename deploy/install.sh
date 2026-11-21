@@ -12,19 +12,41 @@ APP_DIR=${APP_DIR:-/opt/solbot}
 APP_USER=${APP_USER:-solbot}
 BRANCH=${BRANCH:-}
 SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)
-PY=${PYTHON:-python3}
+PY=${PYTHON:-}
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+py_ok() { command -v "$1" >/dev/null 2>&1 && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; }
 
-say "Kiểm tra Python ≥ 3.11"
-"$PY" - <<'PYEOF'
-import sys
-if sys.version_info < (3, 11):
-    sys.exit(f"Cần Python >= 3.11, đang có {sys.version.split()[0]}")
-print(sys.version.split()[0])
-PYEOF
+say "Tìm Python ≥ 3.11"
+if [[ -z "$PY" ]]; then
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if py_ok "$cand"; then PY=$cand; break; fi
+  done
+fi
+if [[ -z "$PY" ]] && command -v apt-get >/dev/null 2>&1; then
+  # Ubuntu 22.04 ships Python 3.10: install 3.12 (deadsnakes PPA); Debian 12 already has 3.11
+  apt-get update -y
+  if grep -qi '^ID=ubuntu' /etc/os-release; then
+    apt-get install -y software-properties-common
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update -y
+    apt-get install -y python3.12 python3.12-venv
+    PY=python3.12
+  else
+    apt-get install -y python3 python3-venv
+    py_ok python3 && PY=python3
+  fi
+fi
+if [[ -z "$PY" ]] || ! py_ok "$PY"; then
+  echo "Không tìm thấy Python >= 3.11. Cài Python 3.11+ rồi chạy lại (hoặc đặt PYTHON=/đường/dẫn/python3.12)."
+  exit 1
+fi
+"$PY" --version
 if ! "$PY" -c "import venv, ensurepip" 2>/dev/null; then
-  if command -v apt-get >/dev/null; then apt-get update -y && apt-get install -y python3-venv git; fi
+  if command -v apt-get >/dev/null 2>&1; then
+    ver=$("$PY" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
+    apt-get install -y "python${ver}-venv" || apt-get install -y python3-venv
+  fi
 fi
 
 if [[ -z "${SKIP_USER:-}" ]] && ! id "$APP_USER" >/dev/null 2>&1; then
