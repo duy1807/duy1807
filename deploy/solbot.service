@@ -1,0 +1,25 @@
+# /etc/systemd/system/solbot.service
+[Unit]
+Description=Solana trading bot (solbot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solbot
+WorkingDirectory=/opt/solbot
+EnvironmentFile=/opt/solbot/.env
+# Passphrase for the encrypted keystore, provided as a systemd credential (not in .env):
+#   systemd-creds encrypt --name=wallet_pass - /etc/solbot/wallet_pass.cred
+LoadCredentialEncrypted=wallet_pass:/etc/solbot/wallet_pass.cred
+ExecStart=/bin/sh -c 'WALLET_PASSPHRASE="$(cat ${CREDENTIALS_DIRECTORY}/wallet_pass)" exec /opt/solbot/.venv/bin/python -m solbot'
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/solbot/data /opt/solbot/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
