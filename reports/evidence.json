@@ -14,26 +14,26 @@
   "status": "SUCCESS",
   "sim_method": "simulateBundle",
   "sim_detail": "simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]",
-  "bundle_id": "6aa1a713e8054f988503385d71e8c094",
+  "bundle_id": "c3b8712151184d92881b2bb7431f5f2e",
   "verify_level": 2,
-  "snapshot_age_ms": 5.387352999881841,
+  "snapshot_age_ms": 10.12219600006938,
   "tip_lamports": 100000,
   "priority_micro_lamports": 100000,
   "last_valid_block_height": 380000150
  },
  "timings_ms": {
-  "t_planned": 1.03,
-  "t_signed": 2.54,
-  "t_simulated": 5.0,
-  "t_sent": 5.37,
-  "t_ack": 7.97,
-  "t_landed": 10.7,
-  "t_verified": 10.74
+  "t_planned": 1.63,
+  "t_signed": 4.57,
+  "t_simulated": 9.52,
+  "t_sent": 9.99,
+  "t_ack": 14.7,
+  "t_landed": 19.13,
+  "t_verified": 19.23
  },
  "legs": [
   {
    "idx": 0,
-   "signature": "2t327ne2BG48dnqVM7mJpgH5qrd9rbifTbsgmzTV8voeJD666FGJgNMHBbqXNmtkFLTHENYVCUYFSB2T56tmwUNh",
+   "signature": "4Z9Wk7o3RPeTsc4badjhTJKm9rTadwtF3cN2KVKeUwTbc7K7gW9DyPKTisHqPostDmwJpAFwgDB7VcuM5kp6K9jW",
    "status": "SUCCESS",
    "planned_out_raw": "282902419232",
    "actual_token_delta": "282902419232",
@@ -42,13 +42,13 @@
    "planned_price": "3.534787693632019650837172379E-7",
    "exec_price": "3.534787693632019650837172379E-7",
    "limit_price": "3.825E-7",
-   "fee_lamports": 25073,
+   "fee_lamports": 25163,
    "tip_paid_lamports": 0,
    "tx_bytes": 795
   },
   {
    "idx": 1,
-   "signature": "3Aq9bvn8nmajPwYrHmzjMesPGQwQXcr81GGsmBqQWX5onBKn6m7kDJAkhV3wsyVkW6nimAcNpaUqvz66QhyDYACt",
+   "signature": "38PWrqfy4GqpMEPjTsMUVzbr6yBmQVUr94mJGKC6DpTfDuoAVpgTbvRrKGEknvrSKQ8v6p3z2S1wPojiN9qSd4T9",
    "status": "SUCCESS",
    "planned_out_raw": "282178383942",
    "actual_token_delta": "282178383942",
@@ -57,13 +57,13 @@
    "planned_price": "3.543857527391409742387289896E-7",
    "exec_price": "3.543857527391409742387289896E-7",
    "limit_price": "3.825E-7",
-   "fee_lamports": 25074,
+   "fee_lamports": 25163,
    "tip_paid_lamports": 0,
    "tx_bytes": 795
   },
   {
    "idx": 2,
-   "signature": "5AhRGZDWZyCgsERs87RhcafkGd6wjqdMM6NKfpikMivsFfaj91JtkUqNjKn6jLY6zyVe2DeFhFSAYdURkjvfH2J3",
+   "signature": "443h5zHetBQ94zX1FrxzAhSEMkigB2d7TJQzP4CZTbTkoR5fiq4dPBsL62cyv6ndGpL9m5o4CeRBdzAPjK7saQrp",
    "status": "SUCCESS",
    "planned_out_raw": "281457124740",
    "actual_token_delta": "281457124740",
@@ -72,13 +72,13 @@
    "planned_price": "3.552938981110405839215139848E-7",
    "exec_price": "3.552938981110405839215139848E-7",
    "limit_price": "3.825E-7",
-   "fee_lamports": 25074,
+   "fee_lamports": 25163,
    "tip_paid_lamports": 0,
    "tx_bytes": 795
   },
   {
    "idx": 3,
-   "signature": "2WC6nLdpWYqaWmb6ptyjwe3z85VxDxuhvxJf45Gzvs5cX4T2SebzTxnt7jSuhr1sgdHDGQGq4NZjmGJpe3Wks4TN",
+   "signature": "2A5NG4CgT1JJWfhLDfCLPGz4Q9tNS1GmFUtPcS3dWDidQaA4cXrTUXxfZRknDj34XjusSnyTA8Urwy74PYF8DVnP",
    "status": "SUCCESS",
    "planned_out_raw": "280738627450",
    "actual_token_delta": "280738627450",
@@ -87,13 +87,13 @@
    "planned_price": "3.562032054809064715330109804E-7",
    "exec_price": "3.562032054809064715330109804E-7",
    "limit_price": "3.825E-7",
-   "fee_lamports": 25074,
+   "fee_lamports": 25164,
    "tip_paid_lamports": 0,
    "tx_bytes": 795
   },
   {
    "idx": 4,
-   "signature": "3nCLUK3sfVdLpZmq8boRDoGxMxAGwXLAQsNBtU7pEFZ316wJ6RPfVdv4jXzK5frkkF72gzvyD1nVxfxfUGzfJRtv",
+   "signature": "3pgP2bJhEk87buxngWZAL91L2GyqHiZTvKLGGaZwtCQcfCDUT61bz1CjwqE2Fyb46cK7yFVwDXg1xaVe2PN2PtFC",
    "status": "SUCCESS",
    "planned_out_raw": "280022877990",
    "actual_token_delta": "280022877990",
@@ -102,14 +102,14 @@
    "planned_price": "3.571136748461357387679636568E-7",
    "exec_price": "3.571136748461357387679636568E-7",
    "limit_price": "3.825E-7",
-   "fee_lamports": 25074,
+   "fee_lamports": 25164,
    "tip_paid_lamports": 100000,
    "tx_bytes": 843
   }
  ],
  "position": {
   "token_raw": "1407299433354",
-  "cost_lamports": 500225364,
+  "cost_lamports": 500225812,
   "rent_lamports": 3539280,
   "tp_pct": "20",
   "sl_pct": "10",

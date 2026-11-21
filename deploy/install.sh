@@ -103,13 +103,11 @@ say "Chạy bộ test (không cần mạng)"
 
 cat <<NEXT
 
-Xong. Các bước tiếp theo (theo thứ tự):
-  1. Điền $APP_DIR/.env (RPC, BUNDLE_SIM_RPC_URL, VERIFY_RPC_A/B, GRPC_ENDPOINT+GRPC_TOKEN, TELEGRAM_*, giữ ALLOW_LIVE=false)
-  2. Tạo ví mã hóa:   sudo -u $APP_USER $APP_DIR/.venv/bin/python $APP_DIR/scripts/wallet_tool.py new --out $APP_DIR/secrets/wallet.enc.json
-     Passphrase cho systemd:  sudo mkdir -p /etc/solbot && echo -n 'PASS' | sudo systemd-creds encrypt --name=wallet_pass - /etc/solbot/wallet_pass.cred
-     rồi chạy lại script này để bật dòng LoadCredentialEncrypted.
-  3. Kiểm tra:        cd $APP_DIR && sudo -u $APP_USER .venv/bin/python -m solbot doctor
-  4. NO_SEND mainnet: sudo -u $APP_USER .venv/bin/python scripts/mainnet_probe.py
-                      sudo -u $APP_USER .venv/bin/python scripts/nosend_check.py --mint <MINT>
-  5. Chạy bot:        sudo systemctl enable --now solbot && journalctl -u solbot -f
+Xong. Bước tiếp theo (1 lệnh, hỏi–đáp: RPC, gRPC token, Telegram, ví, passphrase; rồi chạy doctor):
+  sudo $APP_DIR/.venv/bin/python $APP_DIR/scripts/setup_wizard.py
+
+Sau đó:
+  Kiểm chứng mainnet (không gửi):  cd $APP_DIR && sudo -u $APP_USER .venv/bin/python scripts/mainnet_probe.py
+  Log bot:                        journalctl -u solbot -f
+  Hướng dẫn đầy đủ:               $APP_DIR/DEPLOY_VPS.md
 NEXT

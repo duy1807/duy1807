@@ -1,7 +1,7 @@
 # Báo cáo nghiệm thu (tự động)
 
-Thời điểm: 2026-11-21 23:05:31 UTC  
-Bộ test: **83/83 PASS** trong 13.4 s (`python scripts/acceptance_report.py`)
+Thời điểm: 2026-11-21 23:31:52 UTC  
+Bộ test: **88/88 PASS** trong 14.4 s (`python scripts/acceptance_report.py`)
 
 Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests/fakechain.py`) thực thi chính các giao dịch đã ký của bot (kiểm chữ ký, blockhash, thứ tự account, dữ liệu instruction, guard maxIn/minOut on-chain), RPC/Jito/Jupiter/Telegram giả lập qua HTTP, Yellowstone gRPC bằng server gRPC thật trong tiến trình. Toán PumpSwap đối chiếu golden của SDK chính thức và dữ liệu FeeConfig mainnet.
 
@@ -90,6 +90,7 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 | Yêu cầu | Kết quả | Bằng chứng (test) |
 |---|---|---|
 | systemd: passphrase ví qua credential (%d, $$), chạy được khi không có credential, hardening | **PASS** | `test_unit_passes_passphrase_from_credential` PASS<br>`test_unit_runs_without_credential` PASS<br>`test_unit_hardening_and_installer_present` PASS |
+| Trình cài đặt hỏi–đáp: .env 600 + ALLOW_LIVE=false, ví mã hóa (tạo mới/nhập), tự lấy Telegram ID, bỏ giá trị mẫu, không in bí mật, bot đọc đúng cấu hình | **PASS** | `test_wizard_end_to_end_new_wallet` PASS<br>`test_generated_env_is_read_by_the_bot` PASS<br>`test_wizard_imports_existing_keypair` PASS<br>`test_rpc_url_from_key_or_url` PASS<br>`test_enable_credential_in_unit` PASS |
 
 ## 8. Tích hợp toàn bộ 9 hình thức BUY
 
@@ -102,8 +103,8 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 ## Bằng chứng mẫu: FIXED DIP ×5 (Bundle)
 
 Lệnh #1 DIP 10% — giá tham chiếu `4.25E-7` → giá kích hoạt/trần `3.825E-7` SOL/token — trạng thái **FILLED**  
-Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 5.4 ms — bundle `6aa1a713e8054f988503385d71e8c094`  
-Mốc thời gian (ms từ tín hiệu): {'t_planned': 1.03, 't_signed': 2.54, 't_simulated': 5.0, 't_sent': 5.37, 't_ack': 7.97, 't_landed': 10.7, 't_verified': 10.74}
+Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 10.1 ms — bundle `c3b8712151184d92881b2bb7431f5f2e`  
+Mốc thời gian (ms từ tín hiệu): {'t_planned': 1.63, 't_signed': 4.57, 't_simulated': 9.52, 't_sent': 9.99, 't_ack': 14.7, 't_landed': 19.13, 't_verified': 19.23}
 
 | Leg | Token dự kiến | Token thực nhận | maxIn (lamports) | SOL vào pool | Giá thực hiện | Trần | Tip | Bytes |
 |---|---|---|---|---|---|---|---|---|
@@ -113,9 +114,9 @@ Mốc thời gian (ms từ tín hiệu): {'t_planned': 1.03, 't_signed': 2.54, '
 | 4 | 280738627450 | 280738627450 | 107382524 | 99999999 | 3.562032e-07 | 3.825000e-07 | 0 | 795 |
 | 5 | 280022877990 | 280022877990 | 107108750 | 99999999 | 3.571137e-07 | 3.825000e-07 | 100000 | 843 |
 
-Vị thế: 1407299433354 token raw, giá vốn 500225364 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
+Vị thế: 1407299433354 token raw, giá vốn 500225812 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
 
 ## Danh sách test
 
-Tổng 83, PASS 83, khác: không
+Tổng 88, PASS 88, khác: không
 

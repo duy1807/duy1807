@@ -99,6 +99,10 @@ REQS = [
         ("systemd: passphrase ví qua credential (%d, $$), chạy được khi không có credential, hardening",
          ["test_unit_passes_passphrase_from_credential", "test_unit_runs_without_credential",
           "test_unit_hardening_and_installer_present"]),
+        ("Trình cài đặt hỏi–đáp: .env 600 + ALLOW_LIVE=false, ví mã hóa (tạo mới/nhập), tự lấy Telegram ID, "
+         "bỏ giá trị mẫu, không in bí mật, bot đọc đúng cấu hình",
+         ["test_wizard_end_to_end_new_wallet", "test_generated_env_is_read_by_the_bot",
+          "test_wizard_imports_existing_keypair", "test_rpc_url_from_key_or_url", "test_enable_credential_in_unit"]),
     ]),
     ("8. Tích hợp toàn bộ 9 hình thức BUY", [
         ("NO_SEND: cả 9 hình thức chuẩn bị + ký + mô phỏng, không gửi, không đổi số dư",

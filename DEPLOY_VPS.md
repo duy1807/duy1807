@@ -33,9 +33,25 @@ Script sẽ:
 - tạo `/opt/solbot/.env` từ mẫu, đặt quyền 600/700;
 - cài unit systemd và chạy toàn bộ test.
 
-Dòng cuối phải là `83 passed`. Chạy lại script nhiều lần cũng an toàn: không ghi đè `.env`, `data/`, `secrets/`.
+Dòng cuối phải có `passed` (không có `failed`). Chạy lại script nhiều lần cũng an toàn: không ghi đè `.env`, `data/`, `secrets/`.
 
-## 3. Điền cấu hình
+## 3. Cấu hình bằng trình hỏi–đáp (khuyến nghị — thay cho mục 3 và 4 bên dưới)
+
+```bash
+sudo /opt/solbot/.venv/bin/python /opt/solbot/scripts/setup_wizard.py
+```
+
+Trình này hỏi lần lượt (token và passphrase gõ ẩn, không hiện ra màn hình):
+1. RPC chính: dán URL Helius hoặc chỉ API key. RPC dự phòng mặc định là PublicNode.
+2. GRPC token PublicNode. Nhấn Enter để bỏ qua; khi đó bot dùng HTTP polling.
+3. Token bot Telegram. Trình tự kiểm tra token, rồi bạn gửi `/start` cho bot để nó **tự lấy Telegram ID** của bạn.
+4. Ví: tạo mới hoặc nhập từ file keypair JSON, rồi đặt passphrase. Ví được lưu mã hóa, passphrase được lưu thành
+   credential systemd đã mã hóa.
+
+Sau đó nó ghi `/opt/solbot/.env` (quyền 600, `ALLOW_LIVE=false`), chạy `doctor` và hỏi có khởi động bot không.
+Chạy lại bất cứ lúc nào để đổi cấu hình; nhấn Enter ở mỗi câu để giữ giá trị cũ.
+
+## 3b. Điền cấu hình thủ công (nếu không dùng trình hỏi–đáp)
 
 ```bash
 sudo nano /opt/solbot/.env

@@ -107,11 +107,19 @@ class Config:
         return self.rpc_urls[0]
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls, env_file: str | Path | None = None) -> "Config":
+        """Read configuration from the process environment plus a .env file: ``env_file`` if given, else
+        ./.env in the current directory, else the .env next to the installed package. Real environment
+        variables always win over the file."""
         try:
             from dotenv import load_dotenv  # optional
 
-            load_dotenv(override=False)
+            candidates = [Path(env_file)] if env_file else [Path.cwd() / ".env",
+                                                            Path(__file__).resolve().parent.parent / ".env"]
+            for p in candidates:
+                if p.is_file():
+                    load_dotenv(dotenv_path=p, override=False)
+                    break
         except Exception:  # pragma: no cover
             pass
         c = cls()
