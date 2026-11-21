@@ -69,7 +69,7 @@ class GeyserSource:
         return req
 
     def _resubscribe(self) -> None:
-        if self._queue is not None and self.connected:
+        if self._queue is not None:  # a session exists (even if no message arrived yet)
             self._queue.put_nowait(self._request())
 
     # -- lifecycle --------------------------------------------------------------------------
@@ -125,16 +125,18 @@ class GeyserSource:
                     yield item
 
             call = stub.Subscribe(requests(), metadata=md)
-            self.connected = True
-            log.info("geyser connected to %s", self.endpoint.split(":")[0])
-            # resync base state of every watched market (updates may have been missed)
-            for m in {str(v[0].mint): v[0] for v in self.routes.values()}.values():
-                try:
-                    await self.engine.fetch_now(m, resync=True)
-                except Exception as e:
-                    log.warning("resync %s failed: %s", m.mint, e)
             async for upd in call:
                 self.last_msg_ms = time.monotonic() * 1000
+                if not self.connected:
+                    # the stream is only "connected" once the server actually delivered something
+                    self.connected = True
+                    log.info("geyser stream established with %s", self.endpoint.split(":")[0])
+                    # resync base state of every watched market (updates may have been missed)
+                    for m in {str(v[0].mint): v[0] for v in self.routes.values()}.values():
+                        try:
+                            await self.engine.fetch_now(m, resync=True)
+                        except Exception as e:
+                            log.warning("resync %s failed: %s", m.mint, e)
                 which = upd.WhichOneof("update_oneof")
                 if which == "account":
                     a = upd.account

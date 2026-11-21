@@ -202,4 +202,6 @@ async def run(config: Config) -> None:
         except NotImplementedError:  # pragma: no cover
             pass
     await stop.wait()
+    log.info("shutdown signal received, stopping")
     await app.stop()
+    log.info("solbot stopped cleanly")

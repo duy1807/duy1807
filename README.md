@@ -78,6 +78,17 @@ Với Jupiter: `minOut_i ≥ ceil(SOL / giá_trần)`, bot giải mã instructio
 
 ## 3. Cài đặt trên VPS Tokyo
 
+Cách nhanh (Ubuntu/Debian, chạy lại được để cập nhật):
+
+```bash
+git clone <repo> && cd <repo> && git checkout claude/vigilant-noether-ra13cp
+sudo bash deploy/install.sh          # user solbot, /opt/solbot, .venv, systemd unit, chạy test
+sudo nano /opt/solbot/.env           # điền endpoint, GRPC_TOKEN, Telegram; giữ ALLOW_LIVE=false
+cd /opt/solbot && sudo -u solbot .venv/bin/python -m solbot doctor
+```
+
+Hoặc từng bước thủ công:
+
 ```bash
 sudo useradd -r -m -d /opt/solbot solbot && sudo -iu solbot
 git clone <repo> /opt/solbot && cd /opt/solbot
@@ -170,7 +181,7 @@ khôi phục với đúng giá tham chiếu/giá trigger đã chốt; vị thế
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                       # 78 test
+python -m pytest -q                       # 83 test
 python scripts/acceptance_report.py       # chạy tất cả + ghi docs/ACCEPTANCE_REPORT.md (PASS/FAIL theo yêu cầu)
 ```
 

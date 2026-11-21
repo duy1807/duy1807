@@ -16,6 +16,8 @@ REQS = [
           "test_no_secret_ever_sent"]),
         ("RPC: HTTP 429, timeout, failover, stale slot", ["test_rpc_429_failover", "test_stale_rpc_node_is_skipped"]),
         ("RPC không bao giờ gửi giao dịch (không fallback public RPC)", ["test_rpc_never_exposes_send_transaction"]),
+        ("Polling gộp: nhiều token = 1 getMultipleAccounts/nhịp; tải nền chia đều các provider",
+         ["test_polling_is_batched_across_markets", "test_background_reads_are_spread_over_providers"]),
         ("Mô phỏng: 429 → chuyển endpoint; mọi endpoint 429 → DIP về ARMED, không bị đốt",
          ["test_simulation_rate_limit_fails_over_and_never_burns_dip"]),
         ("Mô phỏng không bao giờ chạy trên bank cũ hơn snapshot (minContextSlot, -32016 → node khác)",
@@ -92,6 +94,11 @@ REQS = [
         ("Snapshot cũ không bao giờ kích hoạt", ["test_stale_snapshot_never_triggers"]),
         ("Lệnh LIVE không chạy khi bot ở NO_SEND", ["test_live_order_does_not_fire_while_bot_in_no_send"]),
         ("Hai lệnh giống hệt chạy đồng thời có chữ ký khác nhau", ["test_identical_concurrent_orders_get_distinct_signatures"]),
+    ]),
+    ("Triển khai (VPS)", [
+        ("systemd: passphrase ví qua credential (%d, $$), chạy được khi không có credential, hardening",
+         ["test_unit_passes_passphrase_from_credential", "test_unit_runs_without_credential",
+          "test_unit_hardening_and_installer_present"]),
     ]),
     ("8. Tích hợp toàn bộ 9 hình thức BUY", [
         ("NO_SEND: cả 9 hình thức chuẩn bị + ký + mô phỏng, không gửi, không đổi số dư",

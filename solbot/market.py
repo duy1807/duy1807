@@ -112,7 +112,7 @@ class BlockhashCache:
 
     async def refresh(self) -> tuple[str, int, int]:
         async with self._lock:
-            v = await self.rpc.get_latest_blockhash("confirmed")
+            v = await self.rpc.get_latest_blockhash("confirmed", balance=True)
             self.value = v
             self.fetched_ms = now_ms()
             return v
@@ -153,6 +153,8 @@ class MarketEngine:
         self.geyser = None  # set by app when GRPC_ENDPOINT configured
         self._resolve_locks: dict[Pubkey, asyncio.Lock] = {}
         self.jup_probe_lamports = 10_000_000  # 0.01 SOL
+        self._batch_task: asyncio.Task | None = None
+        self.poll_stats = {"ticks": 0, "calls": 0, "errors": 0}
 
     # ------------------------------------------------------------------ program configs --
     async def refresh_configs(self) -> None:
@@ -178,6 +180,8 @@ class MarketEngine:
     async def stop(self) -> None:
         if self._cfg_task:
             self._cfg_task.cancel()
+        if self._batch_task:
+            self._batch_task.cancel()
         for m in self.markets.values():
             if m.poll_task:
                 m.poll_task.cancel()
@@ -301,22 +305,53 @@ class MarketEngine:
             if self.geyser is not None:
                 self.geyser.add_market(m)
                 await self.fetch_now(m, resync=self.geyser.connected)  # base state while the stream warms up
-            # HTTP polling runs whenever gRPC is absent or unhealthy (token rejected, stream down, silent)
-            m.poll_task = asyncio.create_task(self._poll_loop(m), name=f"poll-{str(m.mint)[:6]}")
+            # HTTP polling (one batched loop for all markets) runs whenever gRPC is absent or unhealthy
+            if self._batch_task is None or self._batch_task.done():
+                self._batch_task = asyncio.create_task(self._batch_poll_loop(), name="poll-batch")
         else:
             m.poll_task = asyncio.create_task(self._jup_loop(m), name=f"jup-{str(m.mint)[:6]}")
 
-    async def _poll_loop(self, m: TokenMarket) -> None:
+    MARKETS_PER_CALL = 33  # 3 accounts per market -> 99 keys, one getMultipleAccounts request
+
+    async def _batch_poll_loop(self) -> None:
+        """One loop for every watched PumpSwap market: one getMultipleAccounts per 33 markets per tick
+        (instead of one request per market), so free-tier rate limits are not exhausted."""
         interval = self.config.poll_interval_ms / 1000
         while True:
+            t0 = time.monotonic()
+            healthy = self.grpc_healthy()
+            due = [m for m in list(self.markets.values())
+                   if m.route == ROUTE_PUMPSWAP and m.watchers and m.pool is not None and not (healthy and m.synced)]
+            if due:
+                self.poll_stats["ticks"] += 1
+                chunks = [due[i:i + self.MARKETS_PER_CALL] for i in range(0, len(due), self.MARKETS_PER_CALL)]
+                await asyncio.gather(*(self._poll_chunk(c) for c in chunks), return_exceptions=True)
+            await asyncio.sleep(max(0.0, interval - (time.monotonic() - t0)))
+
+    async def _poll_chunk(self, ms: list[TokenMarket]) -> None:
+        keys = []
+        for m in ms:
+            keys += [m.pool.address, m.pool.pool_base_token_account, m.pool.pool_quote_token_account]
+        t0 = now_ms()
+        self.poll_stats["calls"] += 1
+        try:
+            slot, accs = await self.rpc.get_multiple_accounts(keys, "processed", balance=True)
+        except Exception as e:
+            self.poll_stats["errors"] += 1
+            log.debug("batched poll failed: %s", e)
+            return
+        source = "rpc" if self.grpc_healthy() else "poll"
+        for i, m in enumerate(ms):
+            pacc, bacc, qacc = accs[3 * i:3 * i + 3]
+            if pacc is None or bacc is None or qacc is None:
+                continue
             try:
-                if not (self.grpc_healthy() and m.synced):
-                    await self.fetch_now(m)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                log.debug("poll %s failed: %s", m.mint, e)
-            await asyncio.sleep(interval)
+                self._apply_pool(m, slot, pacc.data)
+                self._apply_vault(m, "base", slot, token_account_amount(bacc.data))
+                self._apply_vault(m, "quote", slot, token_account_amount(qacc.data))
+                self._publish(m, slot, source, received_ms=t0)
+            except Exception:
+                log.exception("publishing polled snapshot for %s failed", m.mint)
 
     async def _jup_loop(self, m: TokenMarket) -> None:
         interval = self.config.jupiter_price_poll_ms / 1000

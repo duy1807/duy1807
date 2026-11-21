@@ -11,14 +11,15 @@ WorkingDirectory=/opt/solbot
 EnvironmentFile=/opt/solbot/.env
 # Passphrase for the encrypted keystore, provided as a systemd credential (not in .env):
 #   systemd-creds encrypt --name=wallet_pass - /etc/solbot/wallet_pass.cred
+# In ExecStart systemd expands %d (credentials directory) itself; $$ passes a literal $ to the shell.
 LoadCredentialEncrypted=wallet_pass:/etc/solbot/wallet_pass.cred
-ExecStart=/bin/sh -c 'WALLET_PASSPHRASE="$(cat ${CREDENTIALS_DIRECTORY}/wallet_pass)" exec /opt/solbot/.venv/bin/python -m solbot'
+ExecStart=/bin/sh -c 'if [ -f "%d/wallet_pass" ]; then WALLET_PASSPHRASE="$$(cat "%d/wallet_pass")"; export WALLET_PASSPHRASE; fi; exec /opt/solbot/.venv/bin/python -m solbot run'
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/solbot/data /opt/solbot/logs
+ReadWritePaths=/opt/solbot/data /opt/solbot/logs /opt/solbot/reports
 PrivateTmp=true
 
 [Install]

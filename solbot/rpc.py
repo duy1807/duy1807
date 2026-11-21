@@ -73,9 +73,12 @@ class HttpJsonRpc:
         self._id = 0
         self.rate_limited_until = 0.0
         self.errors = 0
+        self.calls = 0
+        self.rate_limited = 0
 
     async def call(self, method: str, params: list | None = None, timeout: float | None = None) -> Any:
         self._id += 1
+        self.calls += 1
         payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
         try:
             resp = await self._client.post(self.url, json=payload, timeout=timeout or self.timeout)
@@ -89,6 +92,7 @@ class HttpJsonRpc:
             except ValueError:
                 ra_s = None
             self.rate_limited_until = time.monotonic() + min(ra_s or 0.5, 5.0)
+            self.rate_limited += 1
             raise RpcRateLimited(ra_s)
         if resp.status_code >= 500:
             self.errors += 1
@@ -136,13 +140,19 @@ class RpcPool:
                 self.observe_slot(slot)
 
     async def call(self, method: str, params: list | None = None, *, stale_check: bool = True,
-                   timeout: float | None = None) -> Any:
+                   timeout: float | None = None, balance: bool = False) -> Any:
+        """``balance=True`` (background polling / blockhash refresh) rotates the starting endpoint so the
+        steady load is spread over all providers instead of exhausting the first one's rate limit."""
         last_exc: Exception | None = None
         n = len(self.endpoints)
+        start = 0
+        if balance and n > 1:
+            self._rr = (getattr(self, "_rr", -1) + 1) % n
+            start = self._rr
         for attempt in range(self.max_attempts):
             # prefer endpoints that are not currently rate limited
             now = time.monotonic()
-            order = sorted(range(n), key=lambda i: (self.endpoints[i].rate_limited_until > now, i))
+            order = sorted(range(n), key=lambda i: (self.endpoints[i].rate_limited_until > now, (i - start) % n))
             ep = self.endpoints[order[attempt % n]]
             try:
                 res = await ep.call(method, params, timeout=timeout)
@@ -165,8 +175,8 @@ class RpcPool:
         raise last_exc
 
     # -- typed helpers ---------------------------------------------------------------------
-    async def get_multiple_accounts(self, keys: Sequence[Pubkey], commitment: str = "processed"
-                                    ) -> tuple[int, list[AccountInfo | None]]:
+    async def get_multiple_accounts(self, keys: Sequence[Pubkey], commitment: str = "processed",
+                                    balance: bool = False) -> tuple[int, list[AccountInfo | None]]:
         out: list[AccountInfo | None] = []
         slot = 0
         for i in range(0, len(keys), 100):
@@ -174,6 +184,7 @@ class RpcPool:
             res = await self.call(
                 "getMultipleAccounts",
                 [[str(k) for k in chunk], {"encoding": "base64", "commitment": commitment}],
+                balance=balance,
             )
             slot = max(slot, int(res["context"]["slot"]))
             for k, v in zip(chunk, res["value"]):
@@ -188,8 +199,8 @@ class RpcPool:
         res = await self.call("getBalance", [str(key), {"commitment": commitment}])
         return int(res["value"])
 
-    async def get_latest_blockhash(self, commitment: str = "confirmed") -> tuple[str, int, int]:
-        res = await self.call("getLatestBlockhash", [{"commitment": commitment}])
+    async def get_latest_blockhash(self, commitment: str = "confirmed", balance: bool = False) -> tuple[str, int, int]:
+        res = await self.call("getLatestBlockhash", [{"commitment": commitment}], balance=balance)
         v = res["value"]
         return v["blockhash"], int(v["lastValidBlockHeight"]), int(res["context"]["slot"])
 

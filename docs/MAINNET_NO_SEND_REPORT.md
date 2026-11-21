@@ -75,3 +75,28 @@ và mô hình trạng thái tuần tự của Bundle **khớp chương trình Pu
 * API key Helius đã được gửi qua chat; nên tạo key mới sau giai đoạn thử nghiệm. Key chỉ nằm trong `.env` cục bộ
   (đã gitignore), không có trong repo.
 * Lần LIVE đầu: ví nhỏ, `max_sol_per_tx` nhỏ, ×1 trước, đo thời gian land thực tế (`/stats` trong Telegram).
+
+## Soak test daemon trên mainnet + kill -9 (NO_SEND)
+
+`scripts/soak.py` chạy chính `App` của bot (vòng nền đầy đủ: polling gộp, blockhash, keepalive, trigger,
+TP/SL, reconcile) trên 3 token PumpSwap đang giao dịch, với ví test rỗng (không gửi gì). Kết quả ở `reports/soak.md`.
+
+| Kiểm tra | Kết quả |
+|---|---|
+| ARM 9 lệnh (LIMIT −50% ×3, LIMIT +0,3% ×1, DIP 0,3% ×5) trên 3 token | 9 ARMED |
+| LIMIT +0,3%: giá spot đã ≤ LIMIT nhưng giá thực hiện kể cả phí > LIMIT | **Không gửi**, ghi lý do (vd. 0.000028303959 > trần 0.000028166299) |
+| `kill -9` ở giây 75 rồi khởi động lại | 9/9 lệnh ARMED được khôi phục, **giá trigger giữ nguyên tới từng chữ số** |
+| Giá thật dịch chuyển sau khi khởi động lại | LIMIT ×1 và DIP ×5 trên một token **kích hoạt**, dừng đúng ở kiểm tra số dư (ví rỗng) |
+| LIMIT ×1/×3/×5 ở +5% | kích hoạt sau **1–2 ms**, dừng ở kiểm tra số dư ("cần 0.038/0.059/0.080 SOL") |
+| Độ tươi snapshot (polling 300 ms, gộp 1 request/nhịp cho 3 token) | **100% ≤ 600 ms**, p50 ≈ 200 ms, max ≈ 356 ms |
+| Tắt bằng SIGTERM (`python -m solbot run`) | dừng sạch trong ~3 ms |
+| HTTP 429 Helius (gói free) | 8,5% → **3,2%** sau khi chia tải đọc nền đều cho Helius/PublicNode; failover che toàn bộ |
+
+## Bộ triển khai VPS
+
+* `sudo bash deploy/install.sh`: cài đặt idempotent (user hệ thống, `.venv`, thư viện, quyền 600/700, unit systemd,
+  chạy bộ test). Đã chạy thử 2 lần trong sandbox: lần 2 không ghi đè `.env`, 79/79 test PASS trên venv sạch.
+* `python -m solbot doctor`: kiểm tra trước khi chạy (cấu hình, quyền file ví, giải mã ví + số dư, từng RPC
+  (độ trễ, lệch slot, health), simulateBundle, Jito, gRPC + token, Telegram getMe, DB, ALLOW_LIVE).
+* Unit systemd: passphrase ví lấy từ systemd credential (`%d`, `$$` đúng cú pháp systemd, có test), vẫn chạy được
+  với keypair thường.

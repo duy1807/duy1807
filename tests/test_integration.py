@@ -611,3 +611,39 @@ async def test_simulation_never_runs_on_a_bank_older_than_the_snapshot(harness):
     o, res = await app.orders.create_and_wait("NOW", str(ch.mint), params(1), None)
     assert res.status == "SENT", res
     assert (await final_order(app, o["id"]))["status"] == "FILLED"
+
+
+async def test_polling_is_batched_across_markets(harness):
+    """Several watched tokens cost one getMultipleAccounts per tick, not one per token."""
+    from solbot.dex import pumpswap as ps2
+
+    app = await harness.start()
+    ch = harness.chain
+    # clone the pool under 4 extra fake markets watched by the engine
+    m0 = await app.market.watch(ch.mint, "t0")
+    import copy
+    for i in range(4):
+        mm = copy.copy(m0)
+        mm.watchers = {f"x{i}"}
+        mm.info = copy.copy(m0.info)
+        mm.info.mint = __import__("solders.keypair", fromlist=["Keypair"]).Keypair().pubkey()
+        app.market.markets[mm.info.mint] = mm
+    await asyncio.sleep(0.3)
+    st = app.market.poll_stats
+    assert st["ticks"] > 0 and st["calls"] == st["ticks"]  # 5 markets, 1 request per tick
+    for m in app.market.markets.values():
+        assert m.snapshot is not None and m.snapshot.age_ms() < 600
+
+
+async def test_background_reads_are_spread_over_providers(harness):
+    app = await harness.start()
+    hosts = []
+    orig = [ep.call for ep in app.rpc.endpoints]
+    for ep, f in zip(app.rpc.endpoints, orig):
+        async def wrapped(method, params=None, timeout=None, _f=f, _n=ep.name):
+            hosts.append(_n)
+            return await _f(method, params, timeout=timeout)
+        ep.call = wrapped
+    for _ in range(6):
+        await app.rpc.get_multiple_accounts([harness.chain.mint], balance=True)
+    assert hosts.count("rpc1.test") == 3 and hosts.count("rpc2.test") == 3
