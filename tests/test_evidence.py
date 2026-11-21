@@ -1,5 +1,6 @@
 """Produces reports/evidence.json: a DIP ×5 bundle traced leg by leg (used by the acceptance report)."""
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from solbot.orders import OrderParams
 from .conftest import wait_for
 
 
-async def test_write_evidence(harness):
+async def test_write_evidence(harness, tmp_path):
     app = await harness.start()
     ch = harness.chain
     order = await app.orders.create("DIP", str(ch.mint), OrderParams(
@@ -34,5 +35,7 @@ async def test_write_evidence(harness):
                                            "tpsl_enabled")}}
     for l in legs:
         assert Decimal(l["exec_price"]) <= Decimal(l["limit_price"])
-    Path("reports").mkdir(exist_ok=True)
-    Path("reports/evidence.json").write_text(json.dumps(ev, indent=1, default=str))
+    # only scripts/acceptance_report.py publishes evidence into the repo; plain test runs write to a temp dir
+    out = Path(os.environ.get("SOLBOT_EVIDENCE_PATH") or tmp_path / "evidence.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(ev, indent=1, default=str))

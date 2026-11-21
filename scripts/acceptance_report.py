@@ -115,8 +115,11 @@ def main() -> None:
     (ROOT / "reports").mkdir(exist_ok=True)
     junit = ROOT / "reports/junit.xml"
     t0 = time.time()
+    import os
+
+    env = {**os.environ, "SOLBOT_EVIDENCE_PATH": str(ROOT / "reports/evidence.json")}
     proc = subprocess.run([sys.executable, "-m", "pytest", "-q", f"--junitxml={junit}"], cwd=ROOT,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
     dur = time.time() - t0
     tree = ET.parse(junit)
     results: dict[str, str] = {}
