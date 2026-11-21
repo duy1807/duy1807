@@ -1,7 +1,7 @@
 # Báo cáo nghiệm thu (tự động)
 
-Thời điểm: 2026-11-21 17:17:30 UTC  
-Bộ test: **75/75 PASS** trong 11.9 s (`python scripts/acceptance_report.py`)
+Thời điểm: 2026-11-21 17:36:19 UTC  
+Bộ test: **78/78 PASS** trong 13.9 s (`python scripts/acceptance_report.py`)
 
 Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests/fakechain.py`) thực thi chính các giao dịch đã ký của bot (kiểm chữ ký, blockhash, thứ tự account, dữ liệu instruction, guard maxIn/minOut on-chain), RPC/Jito/Jupiter/Telegram giả lập qua HTTP, Yellowstone gRPC bằng server gRPC thật trong tiến trình. Toán PumpSwap đối chiếu golden của SDK chính thức và dữ liệu FeeConfig mainnet.
 
@@ -14,6 +14,9 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 | Ví: private key không lộ (file 600, keystore mã hóa, che log/Telegram) | **PASS** | `test_wallet_file_permissions_enforced` PASS<br>`test_encrypted_keystore_roundtrip` PASS<br>`test_log_redaction` PASS<br>`test_no_secret_ever_sent` PASS |
 | RPC: HTTP 429, timeout, failover, stale slot | **PASS** | `test_rpc_429_failover` PASS<br>`test_stale_rpc_node_is_skipped` PASS |
 | RPC không bao giờ gửi giao dịch (không fallback public RPC) | **PASS** | `test_rpc_never_exposes_send_transaction` PASS |
+| Mô phỏng: 429 → chuyển endpoint; mọi endpoint 429 → DIP về ARMED, không bị đốt | **PASS** | `test_simulation_rate_limit_fails_over_and_never_burns_dip` PASS |
+| Mô phỏng không bao giờ chạy trên bank cũ hơn snapshot (minContextSlot, -32016 → node khác) | **PASS** | `test_simulation_never_runs_on_a_bank_older_than_the_snapshot` PASS |
+| gRPC bị từ chối (thiếu/sai token) → tự chuyển HTTP polling, DIP/LIMIT vẫn hoạt động | **PASS** | `test_grpc_rejected_falls_back_to_http_polling` PASS |
 | Yellowstone gRPC: subscribe, heartbeat ≤600 ms, gom theo chữ ký, mất kết nối/resync | **PASS** | `test_geyser_stream_snapshots_heartbeat_and_dip` PASS<br>`test_geyser_disconnect_marks_stale_and_resyncs` PASS |
 | PumpSwap: discriminator/IDL, thứ tự 17 account, PDA, toán phí khớp SDK chính thức (golden) | **PASS** | `test_instruction_discriminators_match_idl_and_anchor_hash` PASS<br>`test_v2_account_order_matches_idl` PASS<br>`test_known_pdas` PASS<br>`test_decode_mainnet_fee_config` PASS<br>`test_buy_base_input_golden_flat_fees` PASS<br>`test_sell_base_input_golden_flat_fees` PASS<br>`test_sell_mainnet_fee_tier_goldens` PASS<br>`test_buy_quote_roundtrip_never_exceeds_budget` PASS<br>`test_sequential_legs_raise_price` PASS<br>`test_pool_decode_roundtrip_and_short_layout` PASS |
 | Cài đặt: NO_SEND mặc định, kiểm tra miền giá trị + giới hạn cứng | **PASS** | `test_settings_defaults_and_validation` PASS<br>`test_settings_validation_and_stale_confirm` PASS |
@@ -92,8 +95,8 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 ## Bằng chứng mẫu: FIXED DIP ×5 (Bundle)
 
 Lệnh #1 DIP 10% — giá tham chiếu `4.25E-7` → giá kích hoạt/trần `3.825E-7` SOL/token — trạng thái **FILLED**  
-Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 4.5 ms — bundle `bad80209d7294370a988b81895082ca8`  
-Mốc thời gian (ms từ tín hiệu): {'t_planned': 0.82, 't_signed': 2.04, 't_simulated': 3.85, 't_sent': 4.09, 't_ack': 5.99, 't_landed': 7.83, 't_verified': 7.85}
+Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 4.2 ms — bundle `659b1b860c2c45d89058cc8749d0a49d`  
+Mốc thời gian (ms từ tín hiệu): {'t_planned': 0.81, 't_signed': 2.01, 't_simulated': 3.97, 't_sent': 4.28, 't_ack': 6.3, 't_landed': 8.38, 't_verified': 8.41}
 
 | Leg | Token dự kiến | Token thực nhận | maxIn (lamports) | SOL vào pool | Giá thực hiện | Trần | Tip | Bytes |
 |---|---|---|---|---|---|---|---|---|
@@ -103,9 +106,9 @@ Mốc thời gian (ms từ tín hiệu): {'t_planned': 0.82, 't_signed': 2.04, '
 | 4 | 280738627450 | 280738627450 | 107382524 | 99999999 | 3.562032e-07 | 3.825000e-07 | 0 | 795 |
 | 5 | 280022877990 | 280022877990 | 107108750 | 99999999 | 3.571137e-07 | 3.825000e-07 | 100000 | 843 |
 
-Vị thế: 1407299433354 token raw, giá vốn 500225660 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
+Vị thế: 1407299433354 token raw, giá vốn 500225075 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
 
 ## Danh sách test
 
-Tổng 75, PASS 75, khác: không
+Tổng 78, PASS 78, khác: không
 

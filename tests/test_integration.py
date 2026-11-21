@@ -528,11 +528,11 @@ async def test_snapshot_older_than_600ms_before_send_is_reprepared(harness):
     real = app.simulator.simulate
     calls = {"n": 0}
 
-    async def slow_first(txs, expects):
+    async def slow_first(txs, expects, min_slot=None):
         calls["n"] += 1
         if calls["n"] == 1:
             await asyncio.sleep(0.7)  # the plan's snapshot is now > 600 ms old
-        return await real(txs, expects)
+        return await real(txs, expects, min_slot)
 
     app.simulator.simulate = slow_first
     o, res = await app.orders.create_and_wait("NOW", str(ch.mint), params(3), None)
@@ -569,15 +569,45 @@ async def test_rpc_outage_at_trigger_rearms_dip_without_sending(harness):
     real = app.engine._user_accounts
     calls = {"n": 0}
 
-    async def flaky(mint, tp):
-        calls["n"] += 1
-        if calls["n"] <= 2:
-            from solbot.rpc import RpcTransportError
-            raise RpcTransportError("rpc down")
-        return await real(mint, tp)
+    async def flaky(mint, tp, max_age_ms=0):
+        if max_age_ms > 0:  # the trigger hot path
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                from solbot.rpc import RpcTransportError
+                raise RpcTransportError("rpc down")
+        return await real(mint, tp, max_age_ms)
 
     app.engine._user_accounts = flaky
     ch.move_price_to(0.85)
     o = await final_order(app, order["id"])
     assert o["status"] == "FILLED" and o["infra_rearms"] == 2
     assert app.db.one("SELECT COUNT(*) c FROM submissions WHERE order_id=?", (order["id"],))["c"] == 1
+
+
+async def test_simulation_rate_limit_fails_over_and_never_burns_dip(harness):
+    """Primary simulate endpoint returns 429 -> the second one simulates. When every simulate endpoint
+    is rate-limited at trigger time, nothing is sent and the DIP goes back to ARMED (not consumed)."""
+    app = await harness.start(sim_rpc_url="https://rpc1.test,https://rpc2.test")
+    ch = harness.chain
+    ch.rpc_fail_method[("rpc1.test", "simulateTransaction")] = "429"
+    o, res = await app.orders.create_and_wait("NOW", str(ch.mint), params(1), None)
+    assert res.status == "SENT", res
+    ch.rpc_fail_method[("rpc2.test", "simulateTransaction")] = "429"
+    order = await app.orders.create("DIP", str(ch.mint), params(1, dip="10"), None)
+    ch.move_price_to(0.85)
+    await wait_for(lambda: app.db.get("orders", order["id"])["infra_rearms"] >= 1, timeout=5)
+    assert app.db.get("orders", order["id"])["status"] in ("ARMED", "TRIGGERED")
+    assert app.db.one("SELECT COUNT(*) c FROM submissions WHERE order_id=?", (order["id"],))["c"] == 0
+    ch.rpc_fail_method.clear()
+    o = await final_order(app, order["id"])
+    assert o["status"] == "FILLED"
+
+
+async def test_simulation_never_runs_on_a_bank_older_than_the_snapshot(harness):
+    """Sim node lagging behind the snapshot slot (-32016) -> another node simulates."""
+    app = await harness.start(sim_rpc_url="https://rpc1.test,https://rpc2.test")
+    ch = harness.chain
+    ch.rpc_slot_lag["rpc1.test"] = 5  # first sim node is 5 slots behind
+    o, res = await app.orders.create_and_wait("NOW", str(ch.mint), params(1), None)
+    assert res.status == "SENT", res
+    assert (await final_order(app, o["id"]))["status"] == "FILLED"

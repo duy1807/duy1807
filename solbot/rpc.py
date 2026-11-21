@@ -207,10 +207,10 @@ class RpcPool:
         )
         return list(res["value"])
 
-    async def get_transaction(self, sig: str, commitment: str = "confirmed") -> dict | None:
+    async def get_transaction(self, sig: str, commitment: str = "confirmed", max_version: int = 0) -> dict | None:
         return await self.call(
             "getTransaction",
-            [sig, {"encoding": "json", "commitment": commitment, "maxSupportedTransactionVersion": 0}],
+            [sig, {"encoding": "json", "commitment": commitment, "maxSupportedTransactionVersion": max_version}],
             stale_check=False,
         )
 

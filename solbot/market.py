@@ -292,13 +292,17 @@ class MarketEngine:
             if self.geyser and m.route == ROUTE_PUMPSWAP:
                 self.geyser.remove_market(m)
 
+    def grpc_healthy(self) -> bool:
+        g = self.geyser
+        return bool(g is not None and g.connected and now_ms() - g.last_msg_ms < self.config.grpc_stale_ms)
+
     async def _start_feed(self, m: TokenMarket) -> None:
         if m.route == ROUTE_PUMPSWAP:
             if self.geyser is not None:
                 self.geyser.add_market(m)
-                await self.fetch_now(m)  # base state while the stream warms up
-            else:
-                m.poll_task = asyncio.create_task(self._poll_loop(m), name=f"poll-{str(m.mint)[:6]}")
+                await self.fetch_now(m, resync=self.geyser.connected)  # base state while the stream warms up
+            # HTTP polling runs whenever gRPC is absent or unhealthy (token rejected, stream down, silent)
+            m.poll_task = asyncio.create_task(self._poll_loop(m), name=f"poll-{str(m.mint)[:6]}")
         else:
             m.poll_task = asyncio.create_task(self._jup_loop(m), name=f"jup-{str(m.mint)[:6]}")
 
@@ -306,7 +310,8 @@ class MarketEngine:
         interval = self.config.poll_interval_ms / 1000
         while True:
             try:
-                await self.fetch_now(m)
+                if not (self.grpc_healthy() and m.synced):
+                    await self.fetch_now(m)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -325,8 +330,10 @@ class MarketEngine:
             await asyncio.sleep(interval)
 
     # ----------------------------------------------------------------------- fetching --
-    async def fetch_now(self, m: TokenMarket) -> Snapshot:
-        """Fetch a fresh consistent state over HTTP RPC (single context slot) and publish it."""
+    async def fetch_now(self, m: TokenMarket, resync: bool = False) -> Snapshot:
+        """Fetch a fresh consistent state over HTTP RPC (single context slot) and publish it.
+
+        ``resync=True`` (gRPC (re)subscription) marks the market as synced with the stream."""
         t0 = now_ms()
         if m.route == ROUTE_PUMPSWAP:
             assert m.pool is not None
@@ -337,8 +344,9 @@ class MarketEngine:
             self._apply_pool(m, slot, pacc.data)
             self._apply_vault(m, "base", slot, token_account_amount(bacc.data))
             self._apply_vault(m, "quote", slot, token_account_amount(qacc.data))
-            m.synced = True
-            snap = self._publish(m, slot, "rpc" if self.geyser else "poll", received_ms=t0)
+            if resync:
+                m.synced = True
+            snap = self._publish(m, slot, "rpc" if self.grpc_healthy() else "poll", received_ms=t0)
             return snap
         assert self.jupiter is not None
         q = await self.jupiter.quote(C.WSOL_MINT, m.mint, self.jup_probe_lamports, 50)

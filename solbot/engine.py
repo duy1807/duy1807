@@ -154,6 +154,7 @@ class TradeEngine:
         self.on_sell_final: Callable[[dict], Awaitable[None]] | None = None
         self._mint_locks: dict[str, asyncio.Lock] = {}
         self._alt_cache: dict[Pubkey, AddressLookupTableAccount] = {}
+        self._ua_cache: dict[str, tuple[float, dict]] = {}
         self._tasks: set[asyncio.Task] = set()
         verifier.on_final.append(self._on_submission_final)
         if not db.one("SELECT id FROM wallets WHERE pubkey=?", (str(wallet.pubkey),)):
@@ -246,18 +247,42 @@ class TradeEngine:
                                            order["cu_limit"])
 
     # ======================================================================== building ====
-    async def _user_accounts(self, mint: Pubkey, token_program: Pubkey) -> dict:
+    async def _user_accounts(self, mint: Pubkey, token_program: Pubkey, max_age_ms: float = 0) -> dict:
+        """Wallet SOL, token ATA and volume-accumulator state. ``max_age_ms`` > 0 allows a recent cached
+        read (DIP/LIMIT hot path; prefetched while armed). Any submission on the mint invalidates the cache;
+        the simulation still checks the real balances before anything is sent."""
+        key = str(mint)
+        if max_age_ms > 0:
+            hit = self._ua_cache.get(key)
+            if hit and (time.monotonic() - hit[0]) * 1000 <= max_age_ms:
+                return dict(hit[1])
         user = self.wallet.pubkey
         base_ata = ata(user, mint, token_program)
         _, (w, b, uva) = await self.rpc.get_multiple_accounts(
             [user, base_ata, C.user_volume_accumulator(user)], "processed")
-        return {
+        res = {
             "wallet_lamports": w.lamports if w else 0,
             "base_ata": base_ata,
             "base_ata_exists": b is not None,
             "base_amount": token_account_amount(b.data) if b is not None and len(b.data) >= 72 else 0,
             "uva_exists": uva is not None,
         }
+        self._ua_cache[key] = (time.monotonic(), res)
+        return dict(res)
+
+    def invalidate_user_accounts(self, mint: str | None = None) -> None:
+        if mint is None:
+            self._ua_cache.clear()
+        else:
+            self._ua_cache.pop(mint, None)
+
+    async def prefetch_user_accounts(self, mint: Pubkey, older_than_ms: float = 1000) -> None:
+        hit = self._ua_cache.get(str(mint))
+        if hit and (time.monotonic() - hit[0]) * 1000 < older_than_ms:
+            return
+        m = self.market.markets.get(mint)
+        if m is not None:
+            await self._user_accounts(mint, m.info.token_program)
 
     def _buyback_ata(self) -> Pubkey:
         g = self.market.global_config
@@ -275,6 +300,31 @@ class TradeEngine:
                 self._alt_cache[k] = decode_lookup_table(k, a.data)
         return [self._alt_cache[k] for k in keys]
 
+    def pumpswap_buy_ixs(self, plan: Plan, leg: Leg, user: Pubkey) -> list[Instruction]:
+        """Swap instructions of one PumpSwap BUY leg (no compute budget / tip). Shared with the mainnet probe."""
+        st = plan.snapshot.ps_state
+        return [
+            create_ata_idempotent(user, user, plan.mint, plan.token_program),
+            *wsol_wrap(user, leg.max_in),
+            ps.build_buy_v2(user, st.pool, plan.token_program, C.TOKEN_PROGRAM, ata(user, plan.mint, plan.token_program),
+                            ata(user, C.WSOL_MINT), self._buyback_ata(), leg.base_out, leg.max_in),
+            wsol_unwrap(user),
+        ]
+
+    def pumpswap_sell_ixs(self, st: ps.PumpSwapState, user: Pubkey, token_program: Pubkey, amount: int,
+                          min_out: int, close_ata: bool = False) -> list[Instruction]:
+        """Swap instructions of a PumpSwap SELL (no compute budget / tip). Shared with the mainnet probe."""
+        base_ata = ata(user, st.pool.base_mint, token_program)
+        ixs = [
+            create_ata_idempotent(user, user, C.WSOL_MINT),
+            ps.build_sell_v2(user, st.pool, token_program, C.TOKEN_PROGRAM, base_ata, ata(user, C.WSOL_MINT),
+                             self._buyback_ata(), amount, min_out),
+            wsol_unwrap(user),
+        ]
+        if close_ata:
+            ixs.append(close_account(base_ata, user, user, token_program))
+        return ixs
+
     async def build_buy_txs(self, plan: Plan, blockhash: str, micro: int, tip: int, tip_account: Pubkey,
                             user_accts: dict) -> list[BuiltTx]:
         user = self.wallet.pubkey
@@ -286,12 +336,7 @@ class TradeEngine:
             ixs: list[Instruction] = []
             alts: list[AddressLookupTableAccount] = []
             if plan.route == ROUTE_PUMPSWAP:
-                st = plan.snapshot.ps_state
-                ixs.append(create_ata_idempotent(user, user, plan.mint, plan.token_program))
-                ixs += wsol_wrap(user, leg.max_in)
-                ixs.append(ps.build_buy_v2(user, st.pool, plan.token_program, C.TOKEN_PROGRAM, user_accts["base_ata"],
-                                           ata(user, C.WSOL_MINT), self._buyback_ata(), leg.base_out, leg.max_in))
-                ixs.append(wsol_unwrap(user))
+                ixs += self.pumpswap_buy_ixs(plan, leg, user)
             else:
                 assert self.jupiter is not None
                 q = quote_with_min_out(leg.route_data["quote"], leg.min_out)
@@ -367,14 +412,17 @@ class TradeEngine:
         for rnd in range(MAX_PREPARE_ROUNDS):
             snap = trigger_snapshot if (rnd == 0 and trigger_snapshot is not None
                                         and self.market.is_current(trigger_snapshot)) else None
+            m = self.market.markets.get(mint) or await self.market.resolve(mint)
             if snap is None:
-                snap = await self.market.fresh_snapshot(mint)
+                # snapshot and wallet state fetched in parallel (one round-trip instead of two)
+                snap, accts = await asyncio.gather(self.market.fresh_snapshot(mint),
+                                                   self._user_accounts(mint, m.info.token_program))
+            else:
+                # trigger path: snapshot came from the stream, wallet state usually prefetched while ARMED
+                accts = await self._user_accounts(mint, m.info.token_program, max_age_ms=2000)
             if order["kind"] in ("DIP", "LIMIT") and snap.price_sol > Decimal(order["trigger_price"]):
                 raise PriceCapNotMet(f"giá hiện tại {snap.price_sol:.12f} > giá kích hoạt {order['trigger_price']}")
-            m = self.market.markets[mint]
-            plan_t, accts = await asyncio.gather(self.plan_buy(order, snap),
-                                                 self._user_accounts(mint, m.info.token_program))
-            plan: Plan = plan_t
+            plan: Plan = await self.plan_buy(order, snap)
             t_planned = time.time()
             st = snap.ps_state
             self.risk.check_buy(
@@ -397,7 +445,7 @@ class TradeEngine:
             for leg in plan.legs:
                 acc += leg.min_out
                 expects.append(SimExpect(accts["base_ata"], acc))
-            sim = await self.simulator.simulate(txs, expects)
+            sim = await self.simulator.simulate(txs, expects, min_slot=snap.slot or None)
             t_sim = time.time()
             if not sim.ok and _blockhash_problem(sim.err):
                 await self.blockhash.refresh()
@@ -435,6 +483,7 @@ class TradeEngine:
         import base64
         import json
 
+        self.invalidate_user_accounts(str(plan.mint))
         with self.db.transaction():
             sub_id = self.db.insert("submissions", sub)
             for leg, tx in zip(plan.legs, txs):
@@ -498,6 +547,7 @@ class TradeEngine:
         sub = self.db.get("submissions", sub_id)
         if sub is None:
             return
+        self.invalidate_user_accounts(sub["mint"])
         try:
             if sub["purpose"] == "BUY" and sub["order_id"]:
                 await self._finish_buy(sub)
@@ -609,12 +659,8 @@ class TradeEngine:
                 out = st.quote_sell(amount)
                 expected = out.user_out
                 min_out = expected * (10_000 - slip) // 10_000
-                ixs.append(create_ata_idempotent(user, user, C.WSOL_MINT))
-                ixs.append(ps.build_sell_v2(user, st.pool, m.info.token_program, C.TOKEN_PROGRAM, accts["base_ata"],
-                                            ata(user, C.WSOL_MINT), self._buyback_ata(), amount, min_out))
-                ixs.append(wsol_unwrap(user))
-                if amount == balance and self.settings.bool("close_ata_on_full_sell"):
-                    ixs.append(close_account(accts["base_ata"], user, user, m.info.token_program))
+                ixs += self.pumpswap_sell_ixs(st, user, m.info.token_program, amount, min_out,
+                                              amount == balance and self.settings.bool("close_ata_on_full_sell"))
             else:
                 assert self.jupiter is not None
                 q = await self.jupiter.quote(mint, C.WSOL_MINT, amount, slip)
@@ -634,7 +680,7 @@ class TradeEngine:
             if not self.market.is_current(snap):
                 last_err = "snapshot quá cũ sau khi ký"
                 continue
-            sim = await self.simulator.simulate([tx], [None])
+            sim = await self.simulator.simulate([tx], [None], min_slot=snap.slot or None)
             t_sim = time.time()
             if not sim.ok and _blockhash_problem(sim.err):
                 await self.blockhash.refresh()

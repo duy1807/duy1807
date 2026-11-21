@@ -125,11 +125,40 @@ async def test_geyser_disconnect_marks_stale_and_resyncs(harness, geyser_server)
     await wait_for(lambda: m.synced)
     await fake.out.put(None)  # server closes the stream
     await wait_for(lambda: not m.synced)
-    # while disconnected the price crashes, but no fresh confirmation exists -> no trigger
+    # while gRPC is down the HTTP polling fallback keeps snapshots fresh: the LIMIT still fires correctly
     ch.move_price_to(0.8)
-    await asyncio.sleep(0.2)
-    assert app.db.get("orders", order["id"])["status"] == "ARMED"
-    # reconnect -> resubscribe + RPC resync -> fresh snapshot below LIMIT -> fires
+    o = await wait_for(lambda: (lambda o: o if o["status"] == "FILLED" else None)(app.db.get("orders", order["id"])),
+                       timeout=5)
+    sub = app.db.get("submissions", o["submission_id"])
+    assert sub["snapshot_age_ms"] <= 600
+    # the stream reconnects, resubscribes and resyncs
     await wait_for(lambda: fake.sessions >= 2, timeout=5)
-    await wait_for(lambda: app.db.get("orders", order["id"])["status"] == "FILLED", timeout=5)
+    await fake.out.put(slot_update(ch.slot))
+    await wait_for(lambda: m.synced and app.market.grpc_healthy(), timeout=5)
     assert app.geyser.reconnects >= 1
+
+
+class RejectingGeyser(pb_grpc.GeyserServicer):
+    async def Subscribe(self, request_iterator, context):
+        await context.abort(grpc.StatusCode.PERMISSION_DENIED, "requires a personal token")
+        yield  # pragma: no cover
+
+
+async def test_grpc_rejected_falls_back_to_http_polling(harness):
+    server = grpc.aio.server()
+    pb_grpc.add_GeyserServicer_to_server(RejectingGeyser(), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    try:
+        app = await harness.start(grpc_endpoint=f"127.0.0.1:{port}", grpc_tls=False)
+        ch = harness.chain
+        order = await app.orders.create("LIMIT", str(ch.mint), OrderParams(
+            sol_per_buy=Decimal("0.1"), count=3, slippage_pct=Decimal(5), tp_pct=Decimal(0), sl_pct=Decimal(0),
+            limit_price=ch.spot_price() * Decimal("0.9")), None)
+        await asyncio.sleep(0.3)
+        assert not app.market.grpc_healthy() and "personal token" in app.geyser.last_error
+        ch.move_price_to(0.85)
+        o = await wait_for(lambda: (lambda o: o if o["status"] == "FILLED" else None)(app.db.get("orders", order["id"])))
+        assert app.market.markets[ch.mint].snapshot.source == "poll"
+    finally:
+        await server.stop(0)

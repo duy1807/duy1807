@@ -53,9 +53,15 @@ def _logs_tail(logs: list | None, n: int = 6) -> list[str]:
     return [str(x)[:200] for x in (logs or [])[-n:]]
 
 
+class SimulationUnavailable(RpcTransportError):
+    """No simulation endpoint answered (429 / timeout / connection): an infrastructure problem, not a
+    verdict on the transaction. Nothing is sent; DIP/LIMIT orders go back to ARMED."""
+
+
 class Simulator:
-    def __init__(self, single_rpc: HttpJsonRpc, bundle_rpc: HttpJsonRpc | None):
-        self.single_rpc = single_rpc
+    def __init__(self, single_rpc: HttpJsonRpc | list[HttpJsonRpc], bundle_rpc: HttpJsonRpc | None):
+        self.single_rpcs = list(single_rpc) if isinstance(single_rpc, (list, tuple)) else [single_rpc]
+        self.single_rpc = self.single_rpcs[0]
         self.bundle_rpc = bundle_rpc
         self.bundle_supported: bool | None = None if bundle_rpc else False
 
@@ -63,26 +69,29 @@ class Simulator:
     def can_simulate_bundles(self) -> bool:
         return self.bundle_rpc is not None and self.bundle_supported is not False
 
-    async def simulate(self, txs: Sequence[BuiltTx], expects: Sequence[SimExpect | None]) -> SimResult:
+    async def simulate(self, txs: Sequence[BuiltTx], expects: Sequence[SimExpect | None],
+                       min_slot: int | None = None) -> SimResult:
         import time
 
         t0 = time.monotonic()
         if len(txs) == 1:
-            res = await self._single(txs[0], expects[0] if expects else None)
+            res = await self._single(txs[0], expects[0] if expects else None, min_slot)
         else:
             res = await self._bundle(txs, expects)
         res.elapsed_ms = (time.monotonic() - t0) * 1000
         return res
 
-    async def _single(self, tx: BuiltTx, expect: SimExpect | None) -> SimResult:
+    async def _single(self, tx: BuiltTx, expect: SimExpect | None, min_slot: int | None = None) -> SimResult:
         cfg = {"encoding": "base64", "commitment": "processed", "sigVerify": True,
                "replaceRecentBlockhash": False}
+        if min_slot:
+            # never simulate on a bank older than the snapshot the transaction was planned on
+            cfg["minContextSlot"] = int(min_slot)
         if expect:
             cfg["accounts"] = {"encoding": "base64", "addresses": [str(expect.account)]}
-        try:
-            r = await self.single_rpc.call(METHOD_SINGLE, [base64.b64encode(tx.raw).decode(), cfg])
-        except (RpcError, RpcTransportError) as e:
-            return SimResult(False, METHOD_SINGLE, f"simulation RPC failed: {e}")
+        r = await self._call_failover(self.single_rpcs, METHOD_SINGLE, [base64.b64encode(tx.raw).decode(), cfg])
+        if isinstance(r, SimResult):
+            return r
         v = (r or {}).get("value") or {}
         info = {"sig": tx.signature, "err": v.get("err"), "units": v.get("unitsConsumed"),
                 "logs": _logs_tail(v.get("logs"))}
@@ -94,6 +103,37 @@ class Simulator:
         if info["units"] is not None and info["units"] > tx.cu_limit > 0:
             return SimResult(False, METHOD_SINGLE, f"units {info['units']} > CU limit {tx.cu_limit}", [info])
         return SimResult(True, METHOD_SINGLE, None, [info])
+
+    async def _call_failover(self, eps: list[HttpJsonRpc], method: str, params: list):
+        """Try each endpoint; 429/transport errors move on (one short back-off pass). A deterministic
+        JSON-RPC error is returned as a failed SimResult; total unavailability raises SimulationUnavailable."""
+        import asyncio
+        import time as _t
+
+        from .rpc import RpcRateLimited
+
+        last = ""
+        for rnd in range(3):
+            for ep in eps:
+                if ep.rate_limited_until > _t.monotonic() and rnd == 0 and len(eps) > 1:
+                    continue
+                try:
+                    return await ep.call(method, params)
+                except RpcMethodUnsupported:
+                    raise
+                except RpcError as e:
+                    if e.code == -32016:  # node behind minContextSlot: try another node / again shortly
+                        last = f"{ep.name}: behind snapshot slot"
+                        await asyncio.sleep(0.05)
+                        continue
+                    return SimResult(False, method, f"simulation RPC error: {e}")
+                except RpcRateLimited as e:
+                    last = f"{ep.name}: 429"
+                    if len(eps) == 1:
+                        await asyncio.sleep(min(e.retry_after or 0.2, 0.3))
+                except RpcTransportError as e:
+                    last = f"{ep.name}: {e}"
+        raise SimulationUnavailable(f"không endpoint mô phỏng nào phản hồi ({last})")
 
     def _check_post(self, accounts, expect: SimExpect | None, info: dict) -> str | None:
         if not expect:
@@ -130,13 +170,13 @@ class Simulator:
             },
         ]
         try:
-            r = await self.bundle_rpc.call(METHOD_BUNDLE, params)
-            self.bundle_supported = True
+            r = await self._call_failover([self.bundle_rpc], METHOD_BUNDLE, params)
         except RpcMethodUnsupported:
             self.bundle_supported = False
             return SimResult(False, METHOD_NONE, "RPC không hỗ trợ simulateBundle — từ chối gửi Bundle")
-        except (RpcError, RpcTransportError) as e:
-            return SimResult(False, METHOD_BUNDLE, f"simulateBundle RPC failed: {e}")
+        if isinstance(r, SimResult):
+            return r
+        self.bundle_supported = True
         v = (r or {}).get("value") or {}
         summary = v.get("summary")
         results = v.get("transactionResults") or []

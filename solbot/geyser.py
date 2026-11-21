@@ -29,12 +29,14 @@ _COMMITMENT = {"processed": pb.CommitmentLevel.PROCESSED, "confirmed": pb.Commit
 
 class GeyserSource:
     def __init__(self, engine: MarketEngine, endpoint: str, token: str | None, tls: bool = True,
-                 commitment: str = "processed"):
+                 commitment: str = "processed", root_certs: bytes | None = None):
         self.engine = engine
         self.endpoint = endpoint
         self.token = token
         self.tls = tls
         self.commitment = _COMMITMENT.get(commitment, pb.CommitmentLevel.PROCESSED)
+        self.root_certs = root_certs
+        self.last_error = ""
         self.routes: dict[bytes, tuple[TokenMarket, str]] = {}
         self._queue: asyncio.Queue | None = None
         self._task: asyncio.Task | None = None
@@ -83,7 +85,8 @@ class GeyserSource:
                 ("grpc.keepalive_time_ms", 10_000), ("grpc.keepalive_timeout_ms", 5_000),
                 ("grpc.http2.max_pings_without_data", 0), ("grpc.keepalive_permit_without_calls", 1)]
         if self.tls:
-            return grpc.aio.secure_channel(self.endpoint, grpc.ssl_channel_credentials(), options=opts)
+            creds = grpc.ssl_channel_credentials(root_certificates=self.root_certs)
+            return grpc.aio.secure_channel(self.endpoint, creds, options=opts)
         return grpc.aio.insecure_channel(self.endpoint, options=opts)
 
     async def _run(self) -> None:
@@ -95,7 +98,9 @@ class GeyserSource:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.warning("geyser stream error: %s", e)
+                details = e.details() if isinstance(e, grpc.aio.AioRpcError) else None
+                self.last_error = str(details or e)[:200]
+                log.warning("geyser stream error (HTTP polling fallback active): %s", self.last_error)
             self.connected = False
             self.engine.on_stream_down()
             self.reconnects += 1
@@ -125,7 +130,7 @@ class GeyserSource:
             # resync base state of every watched market (updates may have been missed)
             for m in {str(v[0].mint): v[0] for v in self.routes.values()}.values():
                 try:
-                    await self.engine.fetch_now(m)
+                    await self.engine.fetch_now(m, resync=True)
                 except Exception as e:
                     log.warning("resync %s failed: %s", m.mint, e)
             async for upd in call:

@@ -102,10 +102,10 @@ Endpoint cần có (xem `.env.example`):
 | Biến | Vai trò |
 |---|---|
 | `RPC_URLS` | đọc tài khoản/số dư/blockhash (nhiều endpoint = failover) |
-| `SIM_RPC_URL` | `simulateTransaction` |
+| `SIM_RPC_URL` | `simulateTransaction` — danh sách phân cách dấu phẩy, tự chuyển khi 429/timeout/node chậm slot |
 | `BUNDLE_SIM_RPC_URL` | `simulateBundle` (RPC Jito-Solana) — **bắt buộc cho ×3/×5 LIVE** |
 | `VERIFY_RPC_A_URL`, `VERIFY_RPC_B_URL` | 2 nhà cung cấp **khác nhau** để xác minh/đối soát |
-| `GRPC_ENDPOINT`, `GRPC_TOKEN` | Yellowstone gRPC (thiếu → bot dùng HTTP polling 300 ms) |
+| `GRPC_ENDPOINT`, `GRPC_TOKEN` | Yellowstone gRPC (PublicNode cần token cá nhân). Thiếu/hỏng → tự chuyển HTTP polling 300 ms |
 | `JITO_URL` | `https://tokyo.mainnet.block-engine.jito.wtf` |
 
 ## 4. Nghiệm thu NO_SEND trên mainnet (bắt buộc trước LIVE)
@@ -123,6 +123,17 @@ Ví cần có đủ SOL để mô phỏng thành công (mô phỏng dùng số d
 
 Chỉ khi mọi mục PASS mới cân nhắc đặt `ALLOW_LIVE=true`, khởi động lại, rồi trong Telegram bấm
 **Chế độ** và gõ `LIVE xxxx` (4 ký tự cuối địa chỉ ví). Nên bắt đầu với `max_sol_per_tx`/`max_daily_sol` nhỏ.
+
+### Đã chạy thử trên mainnet
+
+Xem [`docs/MAINNET_NO_SEND_REPORT.md`](docs/MAINNET_NO_SEND_REPORT.md). Đã kiểm chứng trên pool PumpSwap thật bằng
+mô phỏng (không ký, không gửi): `buy_v2`/`sell_v2` và Bundle tuần tự ×3 khớp chương trình tới từng lamport
+(chi phí bot tính → chấp nhận, −1 lamport → từ chối). Thời gian tín hiệu → Jito ACK: p50 229–299 ms cho cả 6 loại
+×1/×3/×5, đo từ máy không ở Tokyo. Kiểm tra lại bất cứ lúc nào:
+
+```bash
+python scripts/mainnet_probe.py            # tự tìm pool đang hoạt động; báo cáo: reports/mainnet_probe.md
+```
 
 ## 5. Sử dụng Telegram
 
@@ -159,7 +170,7 @@ khôi phục với đúng giá tham chiếu/giá trigger đã chốt; vị thế
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                       # 75 test
+python -m pytest -q                       # 78 test
 python scripts/acceptance_report.py       # chạy tất cả + ghi docs/ACCEPTANCE_REPORT.md (PASS/FAIL theo yêu cầu)
 ```
 

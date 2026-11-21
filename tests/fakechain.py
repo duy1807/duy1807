@@ -97,6 +97,7 @@ class FakeChain:
         self.jito_429_budget = 0
         self.rpc_calls: dict[str, int] = {}
         self.rpc_slot_lag: dict[str, int] = {}  # host -> slots behind (stale node)
+        self.rpc_fail_method: dict[tuple[str, str], str] = {}  # (host, method) -> "429"
         self.token_program = token_program
         self.decimals = decimals
         # programs/configs
@@ -476,6 +477,8 @@ class FakeChain:
         if method == "simulateTransaction":
             raw = base64.b64decode(params[0])
             cfg = params[1] if len(params) > 1 else {}
+            if cfg.get("minContextSlot") and cfg["minContextSlot"] > self.slot - self.rpc_slot_lag.get(host, 0):
+                return {"__error__": {"code": -32016, "message": "Minimum context slot has not been reached"}}
             res = self.execute(raw, commit=False, sig_verify=cfg.get("sigVerify", False))
             accounts = None
             if cfg.get("accounts"):
@@ -631,7 +634,7 @@ class FakeChain:
         def handler(request: httpx.Request) -> httpx.Response:
             host = request.url.host
             body = json.loads(request.content or b"{}")
-            mode = self.rpc_fail.get(host)
+            mode = self.rpc_fail.get(host) or self.rpc_fail_method.get((host, body.get("method")))
             if mode == "429":
                 return httpx.Response(429, headers={"retry-after": "0"})
             if mode == "error":

@@ -46,9 +46,14 @@ class TriggerManager:
             while True:
                 await asyncio.sleep(interval_ms / 1000)
                 for mint in list(self.armed):
-                    snap = self.market.current(Pubkey.from_string(mint))
+                    pk = Pubkey.from_string(mint)
+                    snap = self.market.current(pk)
                     if snap is not None:
                         self.on_snapshot(snap)
+                    try:  # keep wallet state warm so a trigger saves one RPC round-trip
+                        await self.engine.prefetch_user_accounts(pk)
+                    except Exception:
+                        pass
 
         self._loop_task = asyncio.create_task(loop(), name="trigger-reeval")
 

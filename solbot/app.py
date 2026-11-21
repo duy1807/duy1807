@@ -41,15 +41,19 @@ class App:
         t = config.rpc_timeout_ms
 
         def client(headers: dict | None = None, timeout_ms: int = t) -> httpx.AsyncClient:
+            # keep idle connections for 90 s (httpx default is 5 s): a cold TLS handshake costs 0.3–1.4 s
             return httpx.AsyncClient(transport=transport, timeout=timeout_ms / 1000,
                                      headers={"content-type": "application/json", **(headers or {})},
-                                     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50))
+                                     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50,
+                                                         keepalive_expiry=90))
 
         def ep(url: str) -> HttpJsonRpc:
             return HttpJsonRpc(url, t, client=client())
 
         self.rpc = RpcPool([ep(u) for u in config.rpc_urls], max_slot_lag=config.rpc_max_slot_lag)
-        self.sim_rpc = ep(config.sim_rpc_url or config.primary_rpc)
+        sim_urls = [u.strip() for u in (config.sim_rpc_url or "").split(",") if u.strip()] or list(config.rpc_urls)
+        self.sim_rpcs = [ep(u) for u in sim_urls]
+        self.sim_rpc = self.sim_rpcs[0]
         self.bundle_sim_rpc = ep(config.bundle_sim_rpc_url) if config.bundle_sim_rpc_url else None
         va = config.verify_rpc_a_url or config.primary_rpc
         vb = config.verify_rpc_b_url or config.rpc_urls[-1]
@@ -71,11 +75,12 @@ class App:
         if config.grpc_endpoint:
             from .geyser import GeyserSource
 
+            roots = config.grpc_root_certs.read_bytes() if config.grpc_root_certs else None
             self.geyser = GeyserSource(self.market, config.grpc_endpoint, config.grpc_token, config.grpc_tls,
-                                       config.grpc_commitment)
+                                       config.grpc_commitment, roots)
             self.market.geyser = self.geyser
         self.blockhash = BlockhashCache(self.rpc, config.blockhash_max_age_ms)
-        self.simulator = Simulator(self.sim_rpc, self.bundle_sim_rpc)
+        self.simulator = Simulator(self.sim_rpcs, self.bundle_sim_rpc)
         self.verifier = Verifier(self.db, self.rpc_a, self.rpc_b, config.verify_poll_ms,
                                  config.verify_expiry_margin_blocks, self.verify_independent)
         self.risk = RiskManager(self.db, self.settings, config)
@@ -97,6 +102,37 @@ class App:
             self.engine.notify = self.telegram.notify
         self.recovery_report: dict = {}
 
+    def all_rpc_endpoints(self) -> list[HttpJsonRpc]:
+        eps = list(self.rpc.endpoints) + list(self.sim_rpcs) + list(self.rpc_a.endpoints) + list(self.rpc_b.endpoints)
+        if self.bundle_sim_rpc is not None:
+            eps.append(self.bundle_sim_rpc)
+        seen, out = set(), []
+        for e in eps:
+            if id(e) not in seen:
+                seen.add(id(e))
+                out.append(e)
+        return out
+
+    async def warm_connections(self) -> None:
+        """Open/refresh the TLS connection of every endpoint used on the hot path (RPC, simulate,
+        simulateBundle, verify A/B, Jito) so a trigger never pays a handshake."""
+        async def one(ep):
+            try:
+                await ep.call("getSlot", [{"commitment": "processed"}], timeout=3)
+            except Exception:
+                pass
+
+        await asyncio.gather(*(one(e) for e in self.all_rpc_endpoints()), self.jito.refresh_tip_accounts(),
+                             return_exceptions=True)
+
+    def _start_keepalive(self) -> None:
+        async def loop():
+            while True:
+                await asyncio.sleep(self.config.keepalive_interval_s)
+                await self.warm_connections()
+
+        self._keepalive_task = asyncio.create_task(loop(), name="keepalive")
+
     async def start(self) -> None:
         log.info("starting solbot wallet=%s mode=%s config=%s", self.wallet.pubkey, self.settings.mode,
                  self.config.describe())
@@ -111,7 +147,7 @@ class App:
             await self.blockhash.refresh()
         except Exception as e:
             log.warning("blockhash not available yet: %s", e)
-        await self.jito.refresh_tip_accounts()
+        await self.warm_connections()
         self.recovery.resume(self.recovery_report["resume_verify"])
         armed = await self.triggers.restore()
         opened = await self.autosell.restore()
@@ -123,6 +159,7 @@ class App:
                 self.geyser.start()
             self.recovery.start()
             self.triggers.start()
+            self._start_keepalive()
             self.autosell.start(max(self.config.jupiter_price_poll_ms, 1000))
         if self.telegram:
             await self.telegram.start()
@@ -131,6 +168,8 @@ class App:
     async def stop(self) -> None:
         if self.telegram:
             await self.telegram.stop()
+        if getattr(self, "_keepalive_task", None):
+            self._keepalive_task.cancel()
         await self.recovery.stop()
         await self.triggers.stop()
         await self.autosell.stop()
@@ -142,7 +181,7 @@ class App:
             for t in list(tset):
                 t.cancel()
         await self.rpc.aclose()
-        for extra in (self.sim_rpc, self.bundle_sim_rpc):
+        for extra in (*self.sim_rpcs, self.bundle_sim_rpc):
             if extra is not None:
                 await extra.aclose()
         await self.rpc_a.aclose()
