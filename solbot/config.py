@@ -85,6 +85,8 @@ class Config:
     # --- Safety (operator-level, cannot be changed from Telegram) ---
     allow_live: bool = False  # LIVE may only be switched on from Telegram if this is true
     snapshot_max_age_ms: int = 600
+    trigger_snapshot_reuse_ms: int = 150  # older trigger snapshots are re-fetched before planning (≈1 RTT)
+    trigger_rearm_cooldown_ms: int = 1000  # after a not-sent re-arm, wait before the order may fire again
     hard_max_sol_per_tx: float = 5.0
     hard_max_sol_per_order: float = 25.0
     hard_max_tip_sol: float = 0.05

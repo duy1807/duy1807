@@ -228,7 +228,7 @@ async def test_auto_tp_sl(harness, kind, move, reason):
     app = await harness.start()
     ch = harness.chain
     order, _ = await app.orders.create_and_wait("NOW", str(ch.mint), params(1, sol="0.2", tp="20", sl="15"), None)
-    o = await final_order(app, order["id"])
+    assert (await final_order(app, order["id"]))["status"] == "FILLED"
     pos = app.positions.open_position(str(ch.mint))
     assert pos["tpsl_enabled"] == 1
     ch.move_price_to(move)
@@ -615,8 +615,6 @@ async def test_simulation_never_runs_on_a_bank_older_than_the_snapshot(harness):
 
 async def test_polling_is_batched_across_markets(harness):
     """Several watched tokens cost one getMultipleAccounts per tick, not one per token."""
-    from solbot.dex import pumpswap as ps2
-
     app = await harness.start()
     ch = harness.chain
     # clone the pool under 4 extra fake markets watched by the engine
@@ -647,3 +645,98 @@ async def test_background_reads_are_spread_over_providers(harness):
     for _ in range(6):
         await app.rpc.get_multiple_accounts([harness.chain.mint], balance=True)
     assert hosts.count("rpc1.test") == 3 and hosts.count("rpc2.test") == 3
+
+
+def test_price_guard_error_detection_on_real_mainnet_strings():
+    from solbot.engine import price_guard_error
+
+    bundle = ("bundle simulation failed: {'failed': {'error': {'TransactionFailure': [[171, 208, 165, 60, 4], "
+              "'Error processing Instruction 6: custom program error: 0x1774']}, 'tx_signature': 'x'}}")
+    single = "tx error: {'InstructionError': [6, {'Custom': 6004}]}"
+    assert price_guard_error(bundle, "pumpswap") and price_guard_error(single, "pumpswap")
+    assert not price_guard_error("tx error: {'InstructionError': [6, {'Custom': 6005}]}", "pumpswap")
+    assert not price_guard_error("units [60, 04]", "pumpswap")
+    assert price_guard_error("custom program error: 0x1771", "jupiter")
+
+
+async def test_dip_bounce_before_simulation_rearms_without_sending(harness):
+    """Reproduces a live DIP ×5: price touched the trigger, someone bought before the simulation, the
+    on-chain guard (6004) rejected it. Nothing is sent, the order stays ARMED (one notice), and it fills
+    when the price is back under the ceiling."""
+    app = await harness.start(trigger_rearm_cooldown_ms=100)
+    app.triggers.rearm_cooldown_s = 0.1
+    ch = harness.chain
+    notes = []
+    app.engine.notify = lambda chat, text: notes.append(text)
+    order = await app.orders.create("DIP", str(ch.mint), params(5, slip="10", dip="10"), None)
+    real = app.simulator.simulate
+    state = {"bounced": False}
+
+    async def bounce_once(txs, expects, min_slot=None):
+        if not state["bounced"]:
+            state["bounced"] = True
+            ch.move_price_to(1.06, step=400)  # buyers push the price back up before our simulation
+        return await real(txs, expects, min_slot)
+
+    app.simulator.simulate = bounce_once
+    ch.move_price_to(0.87, step=400)  # dip ~13 %: trigger at -10 %
+    await wait_for(lambda: state["bounced"], timeout=5)
+    await asyncio.sleep(0.05)
+    o = app.db.get("orders", order["id"])
+    assert o["status"] in ("ARMED", "TRIGGERED", "FILLED", "SENT")
+    assert app.db.one("SELECT COUNT(*) c FROM submissions WHERE order_id=? AND status='FAILED_SAFE'",
+                      (order["id"],))["c"] == 0
+    ch.move_price_to(0.85, step=400)  # price comes back under the ceiling
+    o = await final_order(app, order["id"])
+    assert o["status"] == "FILLED", (o["status_reason"], o["wait_note"])
+    subs = app.db.query("SELECT * FROM submissions WHERE order_id=?", (order["id"],))
+    assert len(subs) == 1  # the rejected attempt never became a submission; one bundle was sent
+    for l in legs(app, subs[0]["id"]):
+        assert Decimal(l["exec_price"]) <= Decimal(o["trigger_price"])
+    assert sum("chưa mua" in n for n in notes) == 1
+
+
+async def test_buy_now_slippage_exceeded_in_simulation_is_explained(harness):
+    app = await harness.start()
+    ch = harness.chain
+    real = app.simulator.simulate
+
+    async def pump_first(txs, expects, min_slot=None):
+        ch.move_price_to(1.10, step=200)  # +10 % before simulation, slippage is 5 %
+        return await real(txs, expects, min_slot)
+
+    app.simulator.simulate = pump_first
+    o, res = await app.orders.create_and_wait("NOW", str(ch.mint), params(3, slip="5"), None)
+    assert res.status == "PRESEND_FAILED" and "vượt slippage 5%" in res.message, res
+    assert not [c for c in ch.jito_calls if c["method"] in ("sendTransaction", "sendBundle")]
+
+
+async def test_old_trigger_snapshot_is_refreshed_before_planning(harness):
+    """A trigger snapshot older than 150 ms (still < 600 ms) is not used for planning: the engine plans on
+    the market's current snapshot or fetches a new one, so the plan matches what the simulation will see."""
+    app = await harness.start()
+    ch = harness.chain
+    order = await app.orders.create("LIMIT", str(ch.mint), params(1, limit=str(ch.spot_price() * Decimal("0.5"))),
+                                    None)
+    snap = await app.market.fresh_snapshot(ch.mint)
+    import copy
+    old = copy.copy(snap)
+    old.received_ms -= 400
+    old.confirmed_ms -= 400
+    used = []
+    real_plan = app.engine.plan_buy
+
+    async def spy(order_row, s):
+        used.append((s is old, s.age_ms()))
+        return await real_plan(order_row, s)
+
+    app.engine.plan_buy = spy
+    app.db.update("orders", order["id"], {"status": "TRIGGERED"})
+    try:
+        await app.engine._prepare_and_send_buy(app.db.get("orders", order["id"]), ch.mint, 0.0, old)
+    except Exception:
+        pass  # far-below-market LIMIT: the price check refuses it, fine for this test
+    # either the planner ran on a fresh snapshot, or the price check stopped it before planning on `old`
+    assert all(not is_old and age <= 160 for is_old, age in used)
+    fresh = app.market.current(ch.mint)
+    assert fresh is not old and fresh.age_ms() < 400

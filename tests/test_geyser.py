@@ -158,7 +158,7 @@ async def test_grpc_rejected_falls_back_to_http_polling(harness):
         await asyncio.sleep(0.3)
         assert not app.market.grpc_healthy() and "personal token" in app.geyser.last_error
         ch.move_price_to(0.85)
-        o = await wait_for(lambda: (lambda o: o if o["status"] == "FILLED" else None)(app.db.get("orders", order["id"])))
+        await wait_for(lambda: app.db.get("orders", order["id"])["status"] == "FILLED")
         assert app.market.markets[ch.mint].snapshot.source == "poll"
     finally:
         await server.stop(0)

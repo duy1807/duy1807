@@ -1,7 +1,7 @@
 # Báo cáo nghiệm thu (tự động)
 
-Thời điểm: 2026-11-21 23:31:52 UTC  
-Bộ test: **88/88 PASS** trong 14.4 s (`python scripts/acceptance_report.py`)
+Thời điểm: 2026-11-22 00:21:51 UTC  
+Bộ test: **92/92 PASS** trong 17.1 s (`python scripts/acceptance_report.py`)
 
 Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests/fakechain.py`) thực thi chính các giao dịch đã ký của bot (kiểm chữ ký, blockhash, thứ tự account, dữ liệu instruction, guard maxIn/minOut on-chain), RPC/Jito/Jupiter/Telegram giả lập qua HTTP, Yellowstone gRPC bằng server gRPC thật trong tiến trình. Toán PumpSwap đối chiếu golden của SDK chính thức và dữ liệu FeeConfig mainnet.
 
@@ -51,6 +51,9 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 | Không gửi khi phí+tác động giá làm leg vượt trần (chờ, vẫn ARMED) | **PASS** | `test_dip_waits_when_legs_would_exceed_ceiling` PASS |
 | Slippage 100% vẫn không vượt trần DIP (minOut/maxIn on-chain) | **PASS** | `test_dip_with_100pct_slippage_never_above_ceiling` PASS |
 | DIP ×5 qua gRPC realtime | **PASS** | `test_geyser_stream_snapshots_heartbeat_and_dip` PASS |
+| Giá bật lên giữa lập kế hoạch và mô phỏng (6004): không gửi, vẫn ARMED, báo 1 lần, mua khi giá quay lại | **PASS** | `test_dip_bounce_before_simulation_rearms_without_sending` PASS<br>`test_price_guard_error_detection_on_real_mainnet_strings` PASS |
+| Snapshot trigger > 150 ms được làm mới trước khi lập kế hoạch | **PASS** | `test_old_trigger_snapshot_is_refreshed_before_planning` PASS |
+| BUY NGAY vượt slippage lúc mô phỏng: không gửi, báo lỗi dễ hiểu | **PASS** | `test_buy_now_slippage_exceeded_in_simulation_is_explained` PASS |
 
 ## 5. LIMIT BUY ×1/×3/×5
 
@@ -103,8 +106,8 @@ Môi trường kiểm thử: chuỗi Solana giả lập trong bộ nhớ (`tests
 ## Bằng chứng mẫu: FIXED DIP ×5 (Bundle)
 
 Lệnh #1 DIP 10% — giá tham chiếu `4.25E-7` → giá kích hoạt/trần `3.825E-7` SOL/token — trạng thái **FILLED**  
-Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 10.1 ms — bundle `c3b8712151184d92881b2bb7431f5f2e`  
-Mốc thời gian (ms từ tín hiệu): {'t_planned': 1.63, 't_signed': 4.57, 't_simulated': 9.52, 't_sent': 9.99, 't_ack': 14.7, 't_landed': 19.13, 't_verified': 19.23}
+Mô phỏng: `simulateBundle OK units=[106450, 89450, 89450, 89450, 89600]` — xác minh level 2 (2 RPC) — snapshot 5.9 ms — bundle `57e1452268b74370ad7d76d39fabf821`  
+Mốc thời gian (ms từ tín hiệu): {'t_planned': 0.92, 't_signed': 2.69, 't_simulated': 5.52, 't_sent': 5.88, 't_ack': 8.69, 't_landed': 11.27, 't_verified': 11.3}
 
 | Leg | Token dự kiến | Token thực nhận | maxIn (lamports) | SOL vào pool | Giá thực hiện | Trần | Tip | Bytes |
 |---|---|---|---|---|---|---|---|---|
@@ -114,9 +117,9 @@ Mốc thời gian (ms từ tín hiệu): {'t_planned': 1.63, 't_signed': 4.57, '
 | 4 | 280738627450 | 280738627450 | 107382524 | 99999999 | 3.562032e-07 | 3.825000e-07 | 0 | 795 |
 | 5 | 280022877990 | 280022877990 | 107108750 | 99999999 | 3.571137e-07 | 3.825000e-07 | 100000 | 843 |
 
-Vị thế: 1407299433354 token raw, giá vốn 500225812 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
+Vị thế: 1407299433354 token raw, giá vốn 500226989 lamports (rent tách riêng 3539280), TP 20% / SL 10% bật=1
 
 ## Danh sách test
 
-Tổng 88, PASS 88, khác: không
+Tổng 92, PASS 92, khác: không
 

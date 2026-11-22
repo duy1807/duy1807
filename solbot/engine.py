@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import random
 import time
 from dataclasses import dataclass, field
@@ -410,13 +411,16 @@ class TradeEngine:
         tip = order["tip_lamports"]
         last_err = ""
         for rnd in range(MAX_PREPARE_ROUNDS):
+            reuse_ms = self.config.trigger_snapshot_reuse_ms
             snap = trigger_snapshot if (rnd == 0 and trigger_snapshot is not None
-                                        and self.market.is_current(trigger_snapshot)) else None
+                                        and trigger_snapshot.age_ms() <= reuse_ms) else None
             m = self.market.markets.get(mint) or await self.market.resolve(mint)
             if snap is None:
-                # snapshot and wallet state fetched in parallel (one round-trip instead of two)
-                snap, accts = await asyncio.gather(self.market.fresh_snapshot(mint),
-                                                   self._user_accounts(mint, m.info.token_program))
+                # snapshot (re-fetched if older than reuse_ms, so the plan matches the bank the simulation
+                # will see) and wallet state in parallel: one round-trip instead of two
+                ua_age = 2000 if trigger_snapshot is not None else 0
+                snap, accts = await asyncio.gather(self.market.fresh_snapshot(mint, max_age_ms=2 * reuse_ms),
+                                                   self._user_accounts(mint, m.info.token_program, max_age_ms=ua_age))
             else:
                 # trigger path: snapshot came from the stream, wallet state usually prefetched while ARMED
                 accts = await self._user_accounts(mint, m.info.token_program, max_age_ms=2000)
@@ -451,6 +455,14 @@ class TradeEngine:
                 await self.blockhash.refresh()
                 last_err = "blockhash hết hạn khi mô phỏng — chuẩn bị lại với blockhash mới"
                 continue
+            if not sim.ok and price_guard_error(sim.err, plan.route):
+                # the pool moved between snapshot and simulation and the on-chain guard (maxIn / minOut)
+                # rejected it. Nothing was sent.
+                if order["kind"] in ("DIP", "LIMIT"):
+                    raise PriceCapNotMet("giá trên chuỗi đã bật lên vượt trần lúc mô phỏng (ExceededSlippage) — "
+                                         "chưa gửi gì, tiếp tục chờ giá ≤ trần")
+                raise PresendError(f"giá biến động vượt slippage {order['slippage_bps'] / 100:g}% lúc mô phỏng "
+                                   f"(ExceededSlippage) — không mua, không gửi gì. Thử lại hoặc tăng slippage.")
             if not self.market.is_current(snap):
                 last_err = f"snapshot {snap.age_ms():.0f} ms sau mô phỏng — chuẩn bị lại"
                 continue
@@ -686,6 +698,9 @@ class TradeEngine:
                 await self.blockhash.refresh()
                 last_err = "blockhash hết hạn khi mô phỏng"
                 continue
+            if not sim.ok and price_guard_error(sim.err, snap.route):
+                raise PresendError(f"giá giảm vượt slippage bán {slip / 100:g}% lúc mô phỏng (ExceededSlippage) — "
+                                   f"không bán, không gửi gì.")
             if not self.market.is_current(snap):
                 last_err = "snapshot quá cũ sau mô phỏng"
                 continue
@@ -751,6 +766,18 @@ class TradeEngine:
     def _decimals(self, mint: str) -> int:
         r = self.db.one("SELECT decimals FROM tokens WHERE mint=?", (mint,))
         return int(r["decimals"]) if r and r["decimals"] is not None else 6
+
+
+_PUMPSWAP_GUARD = re.compile(r"0x1774|Custom['\"]?\s*:\s*6004\b|ExceededSlippage")
+_JUPITER_GUARD = re.compile(r"0x1771|Custom['\"]?\s*:\s*6001\b|SlippageToleranceExceeded")
+
+
+def price_guard_error(err: str | None, route: str) -> bool:
+    """True when the simulation failed on the swap's own price guard (PumpSwap 6004 ExceededSlippage on
+    max_quote_amount_in / min_quote_amount_out, Jupiter 6001 SlippageToleranceExceeded)."""
+    if not err:
+        return False
+    return bool((_PUMPSWAP_GUARD if route == ROUTE_PUMPSWAP else _JUPITER_GUARD).search(err))
 
 
 def _blockhash_problem(err: str | None) -> bool:

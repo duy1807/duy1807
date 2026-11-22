@@ -90,6 +90,7 @@ class App:
                                   simulator=self.simulator, jito=self.jito, verifier=self.verifier,
                                   risk=self.risk, positions=self.positions, jupiter=self.jupiter)
         self.triggers = TriggerManager(self.db, self.market, self.engine, self.settings, config.snapshot_max_age_ms)
+        self.triggers.rearm_cooldown_s = config.trigger_rearm_cooldown_ms / 1000
         self.autosell = AutoSell(self.db, self.market, self.engine, self.positions, self.settings,
                                  config.snapshot_max_age_ms)
         self.orders = OrderService(self.db, self.settings, self.market, self.engine, self.triggers)

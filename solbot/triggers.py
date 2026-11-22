@@ -34,6 +34,9 @@ class TriggerManager:
         self.max_age_ms = max_age_ms
         self.armed: dict[str, dict[int, dict]] = {}  # mint -> order_id -> order row (cached)
         self.busy: set[int] = set()
+        self.cooldown_until: dict[int, float] = {}
+        self.rearm_cooldown_s = 1.0
+        self._rearm_notified: set[int] = set()
         self._tasks: set[asyncio.Task] = set()
         self._last_note: dict[int, float] = {}
         market.add_listener(self.on_snapshot)
@@ -108,7 +111,7 @@ class TriggerManager:
             return
         live = self.settings.is_live
         for oid, o in list(orders.items()):
-            if oid in self.busy:
+            if oid in self.busy or self.cooldown_until.get(oid, 0) > time.monotonic():
                 continue
             if o["exec_mode"] == MODE_LIVE and not live:
                 continue  # a LIVE order never fires while the bot is in NO_SEND
@@ -141,10 +144,17 @@ class TriggerManager:
                               ref=f"order:{order_id}")
             res = await self.engine.execute_buy(order_id, signal_ms, snap)
             if res.status == "REARM":
-                # nothing was sent: price moved back above the ceiling while re-preparing
+                # nothing was sent (price back above the ceiling, on-chain guard tripped in simulation, or an
+                # infrastructure hiccup): the order keeps waiting, after a short cooldown
                 if self.db.cas_status("orders", order_id, [ORDER_TRIGGERED], ORDER_ARMED,
                                       {"wait_note": res.message[:300]}):
                     self.armed.setdefault(order["mint"], {})[order_id] = self.db.get("orders", order_id)
+                    self.cooldown_until[order_id] = time.monotonic() + self.rearm_cooldown_s
+                    if order_id not in self._rearm_notified:
+                        self._rearm_notified.add(order_id)
+                        self.engine.notify(order["chat_id"],
+                                           f"⏳ Lệnh #{order_id} {order['kind']} ×{order['count']}: chạm giá nhưng chưa "
+                                           f"mua — {res.message[:200]}. Lệnh vẫn ARMED.")
                     return
             self.market.unwatch(Pubkey.from_string(order["mint"]), f"order:{order_id}")
         finally:

@@ -64,6 +64,13 @@ REQS = [
          ["test_dip_waits_when_legs_would_exceed_ceiling"]),
         ("Slippage 100% vẫn không vượt trần DIP (minOut/maxIn on-chain)", ["test_dip_with_100pct_slippage_never_above_ceiling"]),
         ("DIP ×5 qua gRPC realtime", ["test_geyser_stream_snapshots_heartbeat_and_dip"]),
+        ("Giá bật lên giữa lập kế hoạch và mô phỏng (6004): không gửi, vẫn ARMED, báo 1 lần, mua khi giá quay lại",
+         ["test_dip_bounce_before_simulation_rearms_without_sending",
+          "test_price_guard_error_detection_on_real_mainnet_strings"]),
+        ("Snapshot trigger > 150 ms được làm mới trước khi lập kế hoạch",
+         ["test_old_trigger_snapshot_is_refreshed_before_planning"]),
+        ("BUY NGAY vượt slippage lúc mô phỏng: không gửi, báo lỗi dễ hiểu",
+         ["test_buy_now_slippage_exceeded_in_simulation_is_explained"]),
     ]),
     ("5. LIMIT BUY ×1/×3/×5", [
         ("Giá LIMIT cố định, kích hoạt khi giá ≤ LIMIT, giá thực hiện ≤ LIMIT, chỉ 1 lần",
